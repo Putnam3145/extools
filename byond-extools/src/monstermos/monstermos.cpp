@@ -190,7 +190,7 @@ trvh gasmixture_set_temperature(unsigned int args_len, Value* args, Value src)
 	} else {
 		GasMixture &src_gas = *get_gas_mixture(src);
 		src_gas.set_temperature(vf);
-		src_gas.set_dirty(true);
+		src_gas.check_reactions_async();
 	}
 	return Value::Null();
 }
@@ -216,7 +216,7 @@ trvh gasmixture_set_moles(unsigned int args_len, Value* args, Value src)
 	int index = gas_ids[args[0].value];
 	GasMixture &src_gas = *get_gas_mixture(src);
 	src_gas.set_moles(index, args[1].valuef);
-	src_gas.set_dirty(true);
+	src_gas.check_reactions_async();
 	return Value::Null();
 }
 
@@ -278,8 +278,6 @@ trvh gasmixture_multiply(unsigned int args_len, Value* args, Value src)
 trvh gasmixture_react(unsigned int args_len, Value* args, Value src)
 {
 	GasMixture &src_gas = *get_gas_mixture(src);
-	if(src_gas.sleeping()) return Value((float)NO_REACTION);
-	auto ret = 0;
 	Value holder;
 	if(args_len == 0)
 	{
@@ -289,18 +287,9 @@ trvh gasmixture_react(unsigned int args_len, Value* args, Value src)
 	{
 		holder = args[0];
 	}
-	for(int i=0;i<cached_reactions.size();i++)
-	{
-		auto reaction = cached_reactions[i];
-		if(reaction->check_conditions(src_gas)) {
-			IncRefCount(src.type,src.value); // have to do this or the gas mixture will be GC'd at the end of the function
-			IncRefCount(holder.type,holder.value); // i'm assuming this would also end up GC'd--even worse
-			ret |= cached_reactions[i]->react(src_gas,src,holder);
-		}
-		if(ret & STOP_REACTIONS) return Value((float)ret);
-	}
-	src_gas.set_dirty(ret != NO_REACTION);
-	return Value((float)ret);
+	IncRefCount(src.type,src.value);
+	IncRefCount(holder.type,holder.value);
+	return Value((float)(src_gas.react(src,holder)));
 }
 
 trvh turf_update_adjacent(unsigned int args_len, Value* args, Value src)

@@ -10,7 +10,7 @@ extern std::unordered_map<std::string, int> gas_id_strings;
 
 extern int o2,plasma,co2,tritium,water_vapor,n2o,bz,no2;
 
-bool ByondReaction::check_conditions(GasMixture& air)
+bool ByondReaction::check_conditions(const GasMixture& air)
 {
     auto temp = air.get_temperature();
     auto ener = air.thermal_energy();
@@ -36,7 +36,7 @@ int ByondReaction::react(GasMixture& air,Value src,Value holder)
     return (int)(float)(Core::get_proc(proc_id).call({src,holder}));
 }
 /*
-bool PlasmaFire::check_conditions(GasMixture& air)
+bool PlasmaFire::check_conditions(const GasMixture& air)
 {
     return air.get_temperature() > PLASMA_MINIMUM_BURN_TEMPERATURE &&
     air.get_moles(plasma) > MINIMUM_MOLE_COUNT &&
@@ -107,7 +107,7 @@ int PlasmaFire::react(GasMixture& air,Value src,Value holder)
     return results.at("fire") > 0.0 ? REACTING : NO_REACTION;
 }
 
-bool TritFire::check_conditions(GasMixture& air)
+bool TritFire::check_conditions(const GasMixture& air)
 {
     return air.get_temperature() > FIRE_MINIMUM_TEMPERATURE_TO_EXIST &&
     air.get_moles(tritium) > MINIMUM_MOLE_COUNT &&
@@ -180,7 +180,7 @@ int TritFire::react(GasMixture& air,Value src,Value holder)
 
 #include <cmath>
 
-bool Fusion::check_conditions(GasMixture& air)
+bool Fusion::check_conditions(const GasMixture& air)
 {
     return air.get_temperature() > FUSION_TEMPERATURE_THRESHOLD &&
     air.get_moles(tritium) > FUSION_TRITIUM_MOLES_USED &&

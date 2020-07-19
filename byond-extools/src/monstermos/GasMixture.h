@@ -2,6 +2,14 @@
 
 #include "atmos_defines.h"
 
+class Reaction;
+
+struct Value;
+
+#include <memory>
+
+#include <vector>
+
 #define TOTAL_NUM_GASES 13
 
 #define GAS_MIN_MOLES 0.00000005
@@ -46,8 +54,9 @@ class GasMixture
 		inline float get_volume() const { return volume; }
 		inline void set_volume(float new_vol) { volume = new_vol; }
 		inline float get_last_share() const { return last_share; }
-        inline void set_dirty(bool dirty) { dirty_react = dirty; }
-        inline float sleeping() { return !dirty_react || total_moles() == 0; }
+        void check_reactions();
+        void check_reactions_async();
+        int react(Value src, Value holder);
     private:
         GasMixture();
         float moles[TOTAL_NUM_GASES];
@@ -58,7 +67,8 @@ class GasMixture
         float last_share = 0;
 		float min_heat_capacity = 0;
         bool immutable = false;
-        bool dirty_react = true;
+        std::vector<std::shared_ptr<Reaction>> gas_reactions;
+
 	// you might thing, "damn, all the gases, wont that use up more memory"?
 	// well no. Let's look at the average gas mixture in BYOND land containing both oxygen and nitrogen:
 	// gases (28+8 bytes)

@@ -69,7 +69,7 @@ void GasMixture::merge(const GasMixture &giver) {
     for(int i = 0; i < TOTAL_NUM_GASES; i++) {
         moles[i] += giver.moles[i];
     }
-    set_dirty(true);
+    check_reactions_async();
 }
 
 GasMixture GasMixture::remove(float amount) {
@@ -164,11 +164,11 @@ float GasMixture::share(GasMixture &sharer, int atmos_adjacent_turfs) {
     }
     if(moved_moles > 0)
     {
-        sharer.set_dirty(true);
+        sharer.check_reactions_async();
     }
     else
     {
-        set_dirty(true);
+        check_reactions_async();
     }
     return 0;
 }
@@ -185,14 +185,8 @@ void GasMixture::temperature_share(GasMixture &sharer, float conduction_coeffici
                 temperature = std::max(temperature - heat/self_heat_capacity, TCMB);
             if(!sharer.immutable)
                 sharer.temperature = std::max(sharer.temperature + heat/sharer_heat_capacity, TCMB);
-            if(temperature_delta > 0)
-            {
-                sharer.set_dirty(true);
-            }
-            else
-            {
-                set_dirty(true);
-            }
+            sharer.check_reactions_async();
+            check_reactions_async();
         }
     }
 }
@@ -219,7 +213,7 @@ int GasMixture::compare(GasMixture &sample) const {
 void GasMixture::clear() {
 	if (immutable) return;
 	memset(moles, 0, sizeof(moles));
-    set_dirty(false);
+    gas_reactions.clear();
 }
 
 void GasMixture::multiply(float multiplier) {
@@ -227,5 +221,143 @@ void GasMixture::multiply(float multiplier) {
 	for (int i = 0; i < TOTAL_NUM_GASES; i++) {
 		moles[i] *= multiplier;
 	}
-    set_dirty(true);
+    check_reactions_async();
+}
+
+#include "Reaction.h"
+
+#include "../core/byond_structures.h"
+
+extern std::vector<std::shared_ptr<Reaction>> cached_reactions;
+
+void GasMixture::check_reactions()
+{
+    gas_reactions.clear();
+    for(int i=0;i<cached_reactions.size();i++)
+    {
+        auto reaction = cached_reactions[i];
+        if(reaction->check_conditions(*this)) gas_reactions.push_back(reaction);
+    }
+}
+
+#include <thread>
+#include <mutex>
+
+namespace monstermos::thread_pool
+{
+    struct MixNode
+    {
+        GasMixture* payload;
+        MixNode* next;
+        MixNode(GasMixture* mix)
+        {
+            payload = mix;
+        }            
+    };
+    MixNode* head;
+    MixNode* tail;
+    std::vector<std::thread> thread_pool;
+    GasMixture* pop_no_sync()
+    {
+        if(head)
+        {
+            auto oldHead = head;
+            auto ret = head->payload;
+            head = head->next;
+            delete oldHead;
+            return ret;
+        }
+        else
+        {
+            return nullptr;
+        }
+    }
+    std::mutex queue_mutex;
+    std::condition_variable queue_condition;
+    void wait()
+    {
+        std::unique_lock<std::mutex> lock(queue_mutex);
+        queue_condition.wait(lock);
+    }
+    void notify()
+    {
+        queue_condition.notify_all();
+    }
+    GasMixture* pop_queue()
+    {
+        std::unique_lock<std::mutex> lock(queue_mutex);
+        auto ret = pop_no_sync();
+        while(ret == nullptr)
+        {
+            wait();
+            ret = pop_no_sync();
+        }
+        return ret;
+    }
+    void push_no_sync(GasMixture* mix)
+    {
+        if(!head)
+        {
+            head = new MixNode(mix);
+            tail = head;
+        }
+        else
+        {
+            auto newNode = new MixNode(mix);
+            tail->next = newNode;
+            tail = newNode;
+        }
+        notify();
+    }
+    void push_queue(GasMixture* air)
+    {
+        std::unique_lock<std::mutex> lock(queue_mutex);
+        push_no_sync(air);
+    }
+    void check_queue()
+    {
+        while(true)
+        {
+            pop_queue()->check_reactions();
+        }
+    }
+    void lazy_init()
+    {
+        if(thread_pool.empty())
+        {
+            for(int i=0;i < std::thread::hardware_concurrency()-1; i++)
+            {
+                thread_pool.push_back(std::thread(check_queue));
+            }
+        }
+    }
+    void empty_queue()
+    {
+        while(head)
+        {
+            std::unique_lock<std::mutex> lock(queue_mutex);
+            auto n = pop_no_sync();
+            lock.unlock();
+            if(n != nullptr) n->check_reactions();
+        }
+    }
+}
+
+void GasMixture::check_reactions_async()
+{
+    monstermos::thread_pool::lazy_init();
+    monstermos::thread_pool::push_queue(this);
+}
+
+int GasMixture::react(Value src, Value holder)
+{
+    monstermos::thread_pool::empty_queue(); // if there's still stuff queued, we might be in there; help finish off the queue in the main thread
+    int ret = 0;
+    for(int i=0; i<gas_reactions.size(); i++)
+    {
+        IncRefCount(src.type,src.value);
+        IncRefCount(holder.type,holder.value);
+        ret |= gas_reactions[i]->react(*this,src,holder);
+    }
+    return ret;
 }

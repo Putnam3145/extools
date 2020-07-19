@@ -13,7 +13,7 @@ extern std::unordered_map<unsigned int,float> gas_rarities;
 class Reaction
 {
     public:
-        virtual bool check_conditions(GasMixture& mix) = 0;
+        virtual bool check_conditions(const GasMixture& mix) = 0;
         virtual int react(GasMixture& mix,Value src,Value holder) = 0;
         inline float get_priority() { return priority; }
     protected:
@@ -23,7 +23,7 @@ class Reaction
 class ByondReaction : public Reaction
 {
     public:
-        virtual bool check_conditions(GasMixture& mix);
+        virtual bool check_conditions(const GasMixture& mix);
         virtual int react(GasMixture& mix,Value src,Value holder);
         ByondReaction(Value v) {
             List min_reqs = v.get("min_requirements");
@@ -61,7 +61,7 @@ class ByondReaction : public Reaction
 class PlasmaFire : public Reaction
 {
     public:
-        virtual bool check_conditions(GasMixture& mix);
+        virtual bool check_conditions(const GasMixture& mix);
         virtual int react(GasMixture& mix,Value src,Value holder);
     protected:
         int priority = -2;
@@ -70,7 +70,7 @@ class PlasmaFire : public Reaction
 class TritFire : public Reaction
 {
     public:
-        virtual bool check_conditions(GasMixture& mix);
+        virtual bool check_conditions(const GasMixture& mix);
         virtual int react(GasMixture& mix,Value src,Value holder);
     protected:
         int priority = -1;
@@ -79,7 +79,7 @@ class TritFire : public Reaction
 class Fusion : public Reaction
 {
     public:
-        virtual bool check_conditions(GasMixture& mix);
+        virtual bool check_conditions(const GasMixture& mix);
         virtual int react(GasMixture& mix,Value src,Value holder);
     protected:
         int priority = 2;
