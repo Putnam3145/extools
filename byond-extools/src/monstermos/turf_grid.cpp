@@ -69,26 +69,22 @@ void Tile::update_air_ref() {
 extern Value SSair;
 std::vector<std::weak_ptr<ExcitedGroup>> excited_groups;
 
-void Tile::process_cell(int fire_count) {
-	if (!SSair) return;
+std::tuple< std::vector<Tile*>, int, bool > Tile::pre_process_cell(int fire_count)
+{
+	if (!SSair) return std::make_tuple(std::vector<Tile*>(),-1,false);
 	if (!air) {
 		std::string message = (std::string("process_cell called on turf with no air! ") + std::to_string(turf_ref.value));
 		Runtime((char*)message.c_str()); // ree why doesn't it accept const
-		return;
+		return std::make_tuple(std::vector<Tile*>(),-1,false);
 	}
+	std::vector<Tile*> enemy_tiles;
+	int adjacent_turfs_length = 0;
 	if (turf_ref.get_by_id(str_id_archived_cycle) < fire_count) {
 		archive(fire_count);
 	}
 	SetVariable(turf_ref.type, turf_ref.value, str_id_current_cycle, Value(float(fire_count)));
-
-	bool has_planetary_atmos = turf_ref.get_by_id(str_id_planetary_atmos).valuef;
-	int adjacent_turfs_length = 0;
-	atmos_cooldown++;
 	for (int i = 0; i < 6; i++) {
 		if (adjacent_bits & (1 << i)) adjacent_turfs_length++;
-	}
-	if (has_planetary_atmos) {
-		adjacent_turfs_length++;
 	}
 	for (int i = 0; i < 6; i++) {
 		if (!(adjacent_bits & (1 << i))) continue;
@@ -96,7 +92,22 @@ void Tile::process_cell(int fire_count) {
 		if (!enemy_tile.air) continue; // having no air is bad I think or something.
 		if (fire_count <= enemy_tile.turf_ref.get_by_id(str_id_current_cycle)) continue;
 		enemy_tile.archive(fire_count);
+		enemy_tiles.push_back(&enemy_tile);
+	}
+	bool has_planetary_atmos = turf_ref.get_by_id(str_id_planetary_atmos).valuef;
+	if(has_planetary_atmos) update_planet_atmos();
+	return make_tuple(enemy_tiles,adjacent_turfs_length,has_planetary_atmos);
+}
 
+void add_to_active(Tile* t);
+
+std::vector< std::pair<Tile*, float> > Tile::process_cell(std::vector<Tile*> tiles, int adjacent_turfs_length, bool has_planetary_atmos) {
+	if(has_planetary_atmos) adjacent_turfs_length++;
+	atmos_cooldown++;
+	std::vector< std::pair<Tile*, float> > ret;
+	for(int i = 0;i < tiles.size(); i++)
+	{
+		Tile& enemy_tile = *tiles[i];
 		bool should_share_air = false;
 
 		if (excited_group && enemy_tile.excited_group) {
@@ -107,7 +118,7 @@ void Tile::process_cell(int fire_count) {
 		}
 		else if (air->compare(*enemy_tile.air) != -2) {
 			if (!enemy_tile.excited) {
-				SSair.invoke("add_to_active", { enemy_tile.turf_ref });
+				add_to_active(&enemy_tile);
 			}
 			std::shared_ptr<ExcitedGroup> eg = excited_group;
 			if (!eg)
@@ -126,17 +137,11 @@ void Tile::process_cell(int fire_count) {
 		if (should_share_air) {
 			// if youre like not yogs and youre porting this shit and you hate monstermos and you want spacewind just uncomment this shizz
 			float difference = air->share(*enemy_tile.air, adjacent_turfs_length);
-			if (difference > 0) {
-				turf_ref.invoke_by_id(str_id_consider_pressure_difference, { enemy_tile.turf_ref, difference });
-			}
-			else {
-				enemy_tile.turf_ref.invoke_by_id(str_id_consider_pressure_difference, { turf_ref, -difference });
-			}
+			ret.push_back({&enemy_tile,difference});
 			last_share_check();
 		}
 
 		if (has_planetary_atmos) {
-			update_planet_atmos();
 			if (air->compare(planet_atmos_info->last_mix)) {
 				if (!excited_group) {
 					std::shared_ptr<ExcitedGroup> eg = std::make_shared<ExcitedGroup>();
@@ -147,12 +152,30 @@ void Tile::process_cell(int fire_count) {
 				last_share_check();
 			}
 		}
-		turf_ref.get_by_id(str_id_air).invoke_by_id(str_id_react, { turf_ref });
-		turf_ref.invoke_by_id(str_id_update_visuals, {});
-		if ((!excited_group && !(air->get_temperature() > MINIMUM_TEMPERATURE_START_SUPERCONDUCTION && turf_ref.invoke("consider_superconductivity", {Value::True()})))
-			|| (atmos_cooldown > (EXCITED_GROUP_DISMANTLE_CYCLES * 2))) {
-			SSair.invoke("remove_from_active", { turf_ref });
+	}
+	return ret;
+}
+
+void remove_from_active(Tile* t);
+
+void Tile::post_process_cell(std::vector< std::pair<Tile*, float> > differences)
+{
+	for(int i = 0; i < differences.size(); i++)
+	{
+		Tile& enemy_tile = *differences[i].first;
+		auto difference = differences[i].second;
+		if (difference > 0) {
+			turf_ref.invoke_by_id(str_id_consider_pressure_difference, { enemy_tile.turf_ref, difference });
 		}
+		else {
+			enemy_tile.turf_ref.invoke_by_id(str_id_consider_pressure_difference, { turf_ref, -difference });
+		}
+	}
+	turf_ref.get_by_id(str_id_air).invoke_by_id(str_id_react, { turf_ref });
+	turf_ref.invoke_by_id(str_id_update_visuals, {});
+	if ((!excited_group && !(air->get_temperature() > MINIMUM_TEMPERATURE_START_SUPERCONDUCTION && turf_ref.invoke("consider_superconductivity", {Value::True()})))
+		|| (atmos_cooldown > (EXCITED_GROUP_DISMANTLE_CYCLES * 2))) {
+		remove_from_active(this);
 	}
 }
 
@@ -829,8 +852,10 @@ void ExcitedGroup::self_breakdown(bool space_is_all_consuming) {
 	}
 	breakdown_cooldown = 0;
 }
+
+extern std::list<Tile*> active_turfs;
+
 void ExcitedGroup::dismantle(bool unexcite) {
-	Value active_turfs = SSair.get_by_id(str_id_active_turfs);
 	int turf_list_size = turf_list.size();
 	for (int i = 0; i < turf_list_size; i++) {
 		Tile* tile = turf_list[i];
@@ -842,9 +867,8 @@ void ExcitedGroup::dismantle(bool unexcite) {
 	if (unexcite) {
 		std::vector<Value> turf_refs;
 		for (int i = 0; i < turf_list_size;  i++) {
-			turf_refs.push_back(turf_list[i]->turf_ref);
+			remove_from_active(turf_list[i]);
 		}
-		active_turfs.invoke("Remove", turf_refs);
 	}
 	turf_list.clear();
 }
