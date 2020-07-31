@@ -593,6 +593,7 @@ void air_process_loop()
 		}
 		else
 		{
+			std::this_thread::yield();
 			std::this_thread::sleep_for(std::chrono::milliseconds(10));
 		}
 	}
