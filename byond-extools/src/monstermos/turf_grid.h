@@ -3,6 +3,7 @@
 #include "GasMixture.h"
 #include "../core/core.h"
 #include <memory>
+#include <list>
 
 class TurfGrid;
 struct PlanetAtmosInfo;
@@ -16,7 +17,9 @@ struct Tile
     Tile();
 	void update_air_ref();
 	void update_adjacent(TurfGrid &grid);
-	void process_cell(int fire_count);
+	std::tuple< std::vector<Tile*>, int, bool > pre_process_cell(int fire_count);
+	std::vector< std::pair<Tile*, float> > process_cell(std::vector<Tile*> tiles, int adjacent, bool planetary);
+	void post_process_cell(std::vector< std::pair<Tile*, float> >);
 	void archive(int fire_count);
 	void last_share_check();
 	void update_planet_atmos();

@@ -218,12 +218,16 @@ int GasMixture::compare(GasMixture &sample) const {
 
 void GasMixture::clear() {
 	if (immutable) return;
-	memset(moles, 0, sizeof(moles));
+    #pragma omp simd
+	for (int i = 0; i < TOTAL_NUM_GASES; i++) {
+		moles[i] = 0;
+	}
     set_dirty(false);
 }
 
 void GasMixture::multiply(float multiplier) {
 	if (immutable) return;
+    #pragma omp simd
 	for (int i = 0; i < TOTAL_NUM_GASES; i++) {
 		moles[i] *= multiplier;
 	}

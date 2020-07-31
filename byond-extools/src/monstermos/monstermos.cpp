@@ -368,16 +368,6 @@ trvh turf_set_excited(unsigned int args_len, Value* args, Value src)
 	return Value::Null();
 }
 
-trvh turf_process_cell(unsigned int args_len, Value* args, Value src)
-{
-	if (src.type != TURF || args_len < 1) { return Value::Null(); }
-	Tile *tile = all_turfs.get(src.value);
-	if (tile != nullptr) {
-		tile->process_cell(args[0]);
-	}
-	return Value::Null();
-}
-
 trvh turf_eq(unsigned int args_len, Value* args, Value src) {
 	if (src.type != TURF || args_len < 1) { return Value::Null(); }
 	Tile *tile = all_turfs.get(src.value);
@@ -429,10 +419,26 @@ trvh turf_update_visuals(unsigned int args_len, Value* args, Value src) {
 	return Value::Null();
 }
 
+class Stopwatch {
+	private:
+		std::chrono::time_point<std::chrono::steady_clock> start;
+	public:
+		Stopwatch() {
+			start = std::chrono::steady_clock::now();
+		}
+		void restart() {
+			start = std::chrono::steady_clock::now();
+		}
+		int peek() {
+			auto end = std::chrono::steady_clock::now();
+			return std::chrono::duration_cast<std::chrono::microseconds>(end - start).count();
+		}
+};
+
 std::vector<std::weak_ptr<ExcitedGroup>> excited_groups_currentrun;
 trvh SSair_process_excited_groups(unsigned int args_len, Value* args, Value src) {
-	auto start = std::chrono::high_resolution_clock::now();
-	float time_limit = args[1] * 100000.0f;
+	auto sw = Stopwatch();
+	float time_limit = args[1].valuef * 100000.0f;
 
 	if (args_len < 2) { return Value::Null(); }
 	if (!args[0]) {
@@ -448,7 +454,7 @@ trvh SSair_process_excited_groups(unsigned int args_len, Value* args, Value src)
 			eg->self_breakdown();
 		if (eg->dismantle_cooldown >= EXCITED_GROUP_DISMANTLE_CYCLES)
 			eg->dismantle(true);
-		if (std::chrono::duration_cast<std::chrono::microseconds>(std::chrono::high_resolution_clock::now() - start).count() > time_limit) {
+		if (sw.peek() > time_limit) {
 			return Value::True();
 		}
 	}
@@ -457,6 +463,174 @@ trvh SSair_process_excited_groups(unsigned int args_len, Value* args, Value src)
 
 trvh SSair_get_amt_excited_groups(unsigned int args_len, Value* args, Value src) {
 	return Value(excited_groups.size());
+}
+
+#include <list>
+#include <unordered_set>
+#include <mutex>
+#include <utility>
+#include <tuple>
+#include <condition_variable>
+
+std::mutex process_mutex;
+std::mutex done_mutex;
+std::unordered_set<Tile*> active_turfs;
+std::list<Tile*> active_turfs_currentrun;
+std::list< std::tuple< Tile*, std::vector<Tile*>, int, bool > > processing_turfs;
+std::list<std::pair < Tile*, std::vector< std::pair<Tile*, float> > > > done_processing_turfs;
+
+void add_to_active(Tile* t)
+{
+	active_turfs.insert(t);
+}
+
+void remove_from_active(Tile* t)
+{
+	active_turfs.erase(t);
+}
+
+trvh SSair_add_to_active(unsigned int args_len, Value* args, Value src)
+{
+	if (args_len < 1 || args[0].type != TURF) { return Value::Null(); }
+	Tile *tile = all_turfs.get(args[0].value);
+	if (tile != nullptr) {
+		add_to_active(tile);
+	}
+	return Value::Null();
+}
+
+trvh SSair_remove_from_active(unsigned int args_len, Value* args, Value src)
+{
+	if (args_len < 1 || args[0].type != TURF) { return Value::Null(); }
+	Tile *tile = all_turfs.get(args[0].value);
+	if (tile != nullptr) {
+		remove_from_active(tile);
+	}
+	return Value::Null();
+}
+
+trvh SSair_clear_active_turfs(unsigned int args_len, Value* args, Value src)
+{
+	active_turfs.clear();
+	return Value::Null();
+}
+
+trvh SSair_active_turf_length(unsigned int args_len, Value* args, Value src)
+{
+	return Value((float)(active_turfs.size()));
+}
+
+trvh SSair_active_run_length(unsigned int args_len, Value* args, Value src)
+{
+	return Value((float)(active_turfs_currentrun.size()));
+}
+
+trvh SSair_processing_length(unsigned int args_len, Value* args, Value src)
+{
+	return Value((float)(processing_turfs.size()));
+}
+
+trvh SSair_done_length(unsigned int args_len, Value* args, Value src)
+{
+	return Value((float)(done_processing_turfs.size()));
+}
+
+#include <algorithm>
+
+trvh SSair_get_active_turfs(unsigned int args_len, Value* args, Value src)
+{
+	List l(CreateList(0));
+	std::for_each(active_turfs.begin(),active_turfs.end(),[&](Tile* t) mutable {
+		l.append(t->turf_ref);
+	});
+	return l;
+}
+
+trvh ssair_process_active_turfs(unsigned int args_len, Value* args, Value src)
+{
+	auto sw = Stopwatch();
+	float time_limit = args[1].valuef * 100000.0f;
+	int fire_count = SSair.get("times_fired");
+	if(active_turfs_currentrun.size() == 0) {
+		active_turfs_currentrun = std::list(active_turfs.begin(),active_turfs.end());
+	}
+	while(active_turfs_currentrun.size()) {
+		Tile& cur_turf = *active_turfs_currentrun.front();
+		active_turfs_currentrun.pop_front();
+		auto res = cur_turf.pre_process_cell(fire_count);
+		if(std::get<1>(res) >= 0)
+		{
+			std::unique_lock<std::mutex> lock(process_mutex);
+			processing_turfs.push_back(std::tuple_cat(std::make_tuple(&cur_turf),res));
+		}
+		if (sw.peek() > time_limit) {
+			return Value::True();
+		}
+	}
+	return Value::False();
+}
+
+bool continue_processing_atmos = true;
+
+void air_process_loop()
+{
+	while(continue_processing_atmos)
+	{
+		if(processing_turfs.size())
+		{
+			process_mutex.lock();
+			auto payload = processing_turfs.front();
+			processing_turfs.pop_front();
+			process_mutex.unlock();
+			auto [ tile, enemy_tiles, adjacent_tiles, has_planetary_atmos ] = payload;
+			auto differences = tile->process_cell(enemy_tiles,adjacent_tiles,has_planetary_atmos);
+			{
+				std::unique_lock<std::mutex> lock(done_mutex);
+				done_processing_turfs.push_back(make_pair(tile,differences));
+			}
+		}
+		else
+		{
+			std::this_thread::yield();
+		}
+	}
+}
+
+trvh ssair_post_process_turfs(unsigned int args_len, Value* args, Value src)
+{
+	auto sw = Stopwatch();
+	float time_limit = args[1] * 100000.0f;
+	while(done_processing_turfs.size()) {
+		done_mutex.lock();
+		auto cur_turf = done_processing_turfs.front();
+		done_processing_turfs.pop_front();
+		done_mutex.unlock();
+		cur_turf.first->post_process_cell(cur_turf.second);
+		if (sw.peek() > time_limit) {
+			return Value::True();
+		}
+	}
+	return Value::False();
+}
+
+trvh ssair_process_turf_equalize(unsigned int args_len, Value* args, Value src)
+{
+	auto sw = Stopwatch();
+	float time_limit = args[1].valuef * 100000.0f;
+	int fire_count = SSair.get("times_fired");
+	if(active_turfs_currentrun.size() == 0) 
+	{
+		active_turfs_currentrun = std::list(active_turfs.begin(),active_turfs.end());;
+	}
+	while(active_turfs_currentrun.size()) {
+		auto cur_turf = active_turfs_currentrun.front();
+		active_turfs_currentrun.pop_front();
+		cur_turf->equalize_pressure_in_zone(fire_count);
+		if (sw.peek() > time_limit) {
+			return Value::True();
+		}
+	}
+	return Value::False();
 }
 
 trvh refresh_atmos_grid(unsigned int args_len, Value* args, Value src)
@@ -511,9 +685,16 @@ int str_id_atmosadj;
 int str_id_is_openturf;
 int str_id_x, str_id_y, str_id_z;
 int str_id_current_cycle, str_id_archived_cycle, str_id_planetary_atmos, str_id_initial_gas_mix;
-int str_id_active_turfs;
 int str_id_react, str_id_gas_reactions, str_id_consider_pressure_difference, str_id_update_visuals, str_id_floor_rip;
 int str_id_monstermos_turf_limit, str_id_monstermos_hard_turf_limit;
+
+std::thread processing_loop;
+
+trvh end_thread(unsigned int args_len, Value* args, Value src) {
+	continue_processing_atmos = false;
+	processing_loop.join();
+	return Value::Null();
+}
 
 const char* enable_monstermos()
 {
@@ -528,7 +709,6 @@ const char* enable_monstermos()
 	str_id_z = Core::GetStringId("z", true);
 	str_id_current_cycle = Core::GetStringId("current_cycle", true);
 	str_id_archived_cycle = Core::GetStringId("archived_cycle", true);
-	str_id_active_turfs = Core::GetStringId("active_turfs", true);
 	str_id_planetary_atmos = Core::GetStringId("planetary_atmos", true);
 	str_id_initial_gas_mix = Core::GetStringId("initial_gas_mix", true);
 	str_id_atmos_overlay_types = Core::GetStringId("atmos_overlay_types", true);
@@ -601,15 +781,26 @@ const char* enable_monstermos()
 	Core::get_proc("/turf/open/proc/eg_garbage_collect").hook(turf_eg_garbage_collect);
 	Core::get_proc("/turf/open/proc/get_excited").hook(turf_get_excited);
 	Core::get_proc("/turf/open/proc/set_excited").hook(turf_set_excited);
-	Core::get_proc("/turf/open/proc/process_cell").hook(turf_process_cell);
 	Core::get_proc("/turf/open/proc/equalize_pressure_in_zone").hook(turf_eq);
 	Core::get_proc("/turf/open/proc/update_visuals").hook(turf_update_visuals);
 	Core::get_proc("/world/proc/refresh_atmos_grid").hook(refresh_atmos_grid);
 	Core::get_proc("/datum/controller/subsystem/air/proc/process_excited_groups_extools").hook(SSair_process_excited_groups);
+	Core::get_proc("/datum/controller/subsystem/air/proc/process_turf_equalize_extools").hook(ssair_process_turf_equalize);
+	Core::get_proc("/datum/controller/subsystem/air/proc/process_active_turfs_extools").hook(ssair_process_active_turfs);
+	Core::get_proc("/datum/controller/subsystem/air/proc/post_process_turfs_extools").hook(ssair_post_process_turfs);
 	Core::get_proc("/datum/controller/subsystem/air/proc/get_amt_excited_groups").hook(SSair_get_amt_excited_groups);
 	Core::get_proc("/datum/controller/subsystem/air/proc/extools_update_ssair").hook(SSair_update_ssair);
 	Core::get_proc("/datum/controller/subsystem/air/proc/extools_setup_gas_reactions").hook(SSair_update_gas_reactions);
-
+	Core::get_proc("/datum/controller/subsystem/air/proc/remove_from_active_extools").hook(SSair_remove_from_active);
+	Core::get_proc("/datum/controller/subsystem/air/proc/add_to_active_extools").hook(SSair_add_to_active);
+	Core::get_proc("/datum/controller/subsystem/air/proc/clear_active_turfs").hook(SSair_clear_active_turfs);
+	Core::get_proc("/datum/controller/subsystem/air/proc/active_turfs_length").hook(SSair_active_turf_length);
+	Core::get_proc("/datum/controller/subsystem/air/proc/cpp_currentrun_length").hook(SSair_active_run_length);
+	Core::get_proc("/datum/controller/subsystem/air/proc/processing_length").hook(SSair_processing_length);
+	Core::get_proc("/datum/controller/subsystem/air/proc/post_processing_length").hook(SSair_done_length);
+	Core::get_proc("/datum/controller/subsystem/air/proc/get_active_turfs").hook(SSair_get_active_turfs);
+	Core::get_proc("/proc/destroy_extools_atmos_thread").hook(end_thread);
+	processing_loop = std::thread(air_process_loop);
 	all_turfs.refresh();
 	return "ok";
 }
