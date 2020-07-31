@@ -8,6 +8,13 @@
 
 #include <cmath>
 #include <chrono>
+#include <algorithm>
+#include <list>
+#include <unordered_set>
+#include <mutex>
+#include <utility>
+#include <tuple>
+#include <thread>
 
 using namespace monstermos::constants;
 
@@ -465,13 +472,6 @@ trvh SSair_get_amt_excited_groups(unsigned int args_len, Value* args, Value src)
 	return Value(excited_groups.size());
 }
 
-#include <list>
-#include <unordered_set>
-#include <mutex>
-#include <utility>
-#include <tuple>
-#include <condition_variable>
-
 std::mutex process_mutex;
 std::mutex done_mutex;
 std::unordered_set<Tile*> active_turfs;
@@ -552,7 +552,9 @@ trvh ssair_process_active_turfs(unsigned int args_len, Value* args, Value src)
 	float time_limit = args[1].valuef * 100000.0f;
 	int fire_count = SSair.get("times_fired");
 	if(active_turfs_currentrun.size() == 0) {
-		active_turfs_currentrun = std::list(active_turfs.begin(),active_turfs.end());
+		std::for_each(active_turfs.begin(),active_turfs.end(),[](Tile* t) {
+			active_turfs_currentrun.push_back(t);
+		});
 	}
 	while(active_turfs_currentrun.size()) {
 		Tile& cur_turf = *active_turfs_currentrun.front();
@@ -618,9 +620,10 @@ trvh ssair_process_turf_equalize(unsigned int args_len, Value* args, Value src)
 	auto sw = Stopwatch();
 	float time_limit = args[1].valuef * 100000.0f;
 	int fire_count = SSair.get("times_fired");
-	if(active_turfs_currentrun.size() == 0) 
-	{
-		active_turfs_currentrun = std::list(active_turfs.begin(),active_turfs.end());;
+	if(active_turfs_currentrun.size() == 0) {
+		std::for_each(active_turfs.begin(),active_turfs.end(),[](Tile* t) {
+			active_turfs_currentrun.push_back(t);
+		});
 	}
 	while(active_turfs_currentrun.size()) {
 		auto cur_turf = active_turfs_currentrun.front();
@@ -665,8 +668,6 @@ trvh SSair_update_ssair(unsigned int args_len, Value* args, Value src) {
 	initialize_gas_overlays();
 	return Value::Null();
 }
-
-#include <algorithm>
 
 trvh SSair_update_gas_reactions(unsigned int args_len, Value* args, Value src) {
 	Container gas_reactions = SSair.get("gas_reactions");
