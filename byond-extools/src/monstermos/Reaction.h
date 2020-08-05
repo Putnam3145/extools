@@ -29,14 +29,12 @@ class ByondReaction : public Reaction
             List min_reqs = v.get("min_requirements");
             if(min_reqs.at("TEMP").type == DataType::NUMBER) min_temp_req = min_reqs.at("TEMP");
             if(min_reqs.at("ENER").type == DataType::NUMBER) min_ener_req = min_reqs.at("ENER");
-            size_t next_thing = 0;
             for(int i=0;i < TOTAL_NUM_GASES;i++)
             {
                 auto gasReq = min_reqs.at(gas_id_to_type[i]);
                 if(gasReq.type == DataType::NUMBER)
                 {
-                    min_gas_reqs[i] = (float)gasReq;
-                    next_thing++;
+                    min_gas_reqs[i] = gasReq;
                 }
             }
             priority = v.get("priority");

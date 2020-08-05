@@ -12,9 +12,7 @@ extern int o2,plasma,co2,tritium,water_vapor,n2o,bz,no2;
 
 bool ByondReaction::check_conditions(GasMixture& air)
 {
-    auto temp = air.get_temperature();
-    auto ener = air.thermal_energy();
-    if(temp < min_temp_req || ener < min_ener_req)
+    if(air.get_temperature() < min_temp_req || air.thermal_energy() < min_ener_req)
     {
         return false;
     }
@@ -173,7 +171,7 @@ int TritFire::react(GasMixture& air,Value src,Value holder)
     }
     return results.at("fire") > 0.0 ? REACTING : NO_REACTION;
 }
-
+*/
 #define _USE_MATH_DEFINES
 
 #include <math.h>
@@ -190,6 +188,16 @@ bool Fusion::check_conditions(GasMixture& air)
 
 extern float gas_fusion_power[TOTAL_NUM_GASES];
 
+inline double byondfmod(double a,double b)
+{
+    double first = fmod(a,b);
+    if(first < 0.0)
+    {
+        first += b;
+    }
+    return first;
+}
+
 int Fusion::react(GasMixture& air,Value src,Value holder)
 {
     Container analyzer_results = src.get("analyzer_results");
@@ -203,11 +211,11 @@ int Fusion::react(GasMixture& air,Value src,Value holder)
     {
         gas_power += gas_fusion_power[i] * air.get_moles(i);
     }
-    auto instability = fmod(pow(gas_power*INSTABILITY_GAS_POWER_FACTOR,2), toroidal_size);
-    auto plasma_2 = (initial_plasma - FUSION_MOLE_THRESHOLD)/scale_factor;
-    auto carbon_2 = (initial_carbon - FUSION_MOLE_THRESHOLD)/scale_factor;
-    plasma_2 = fmod(plasma_2 - (instability * sin(carbon_2)),toroidal_size);
-    carbon_2 = fmod(carbon_2 - plasma_2, toroidal_size);
+    auto instability = byondfmod(pow(gas_power*INSTABILITY_GAS_POWER_FACTOR,2), toroidal_size);
+    double plasma_2 = (initial_plasma - FUSION_MOLE_THRESHOLD)/scale_factor;
+    double carbon_2 = (initial_carbon - FUSION_MOLE_THRESHOLD)/scale_factor;
+    plasma_2 = byondfmod(plasma_2 - (instability * sin(carbon_2)),toroidal_size);
+    carbon_2 = byondfmod(carbon_2 - plasma_2, toroidal_size);
     air.set_moles(plasma,plasma_2*scale_factor + FUSION_MOLE_THRESHOLD);
     air.set_moles(co2,carbon_2*scale_factor + FUSION_MOLE_THRESHOLD);
     auto delta_plasma = initial_plasma - air.get_moles(plasma);
@@ -227,7 +235,7 @@ int Fusion::react(GasMixture& air,Value src,Value holder)
         air.set_moles(co2,initial_carbon);
         return NO_REACTION;
     }
-    air.set_moles(tritium,-FUSION_TRITIUM_MOLES_USED);
+    air.set_moles(tritium,air.get_moles(tritium)-FUSION_TRITIUM_MOLES_USED);
     if(reaction_energy > 0)
     {
         air.set_moles(o2,air.get_moles(o2)+FUSION_TRITIUM_MOLES_USED*(reaction_energy*FUSION_TRITIUM_CONVERSION_COEFFICIENT));
@@ -250,9 +258,9 @@ int Fusion::react(GasMixture& air,Value src,Value holder)
         auto new_heat_capacity = air.heat_capacity();
         if(new_heat_capacity > MINIMUM_HEAT_CAPACITY)
         {
-            air.set_temperature(std::clamp(air.get_temperature()*old_heat_capacity+reaction_energy,TCMB,INFINITY));
+            air.set_temperature(std::clamp((air.get_temperature()*old_heat_capacity+reaction_energy)/new_heat_capacity,TCMB,INFINITY));
         }
         return REACTING;
     }
     return NO_REACTION;
-}*/
+}
