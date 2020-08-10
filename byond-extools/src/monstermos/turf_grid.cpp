@@ -3,6 +3,7 @@
 #include "var_ids.h"
 #include <algorithm>
 #include <cstring>
+#include <mutex>
 
 using namespace monstermos::constants;
 

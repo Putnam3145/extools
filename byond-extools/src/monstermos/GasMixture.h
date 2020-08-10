@@ -1,6 +1,7 @@
 #pragma once
 
 #include "atmos_defines.h"
+#include <mutex>
 
 #define TOTAL_NUM_GASES 13
 
@@ -13,9 +14,11 @@ class GasMixture
 {
     public:
         GasMixture(float volume);
+        GasMixture(const GasMixture& other) { copy_from_mutable(other); }
+        GasMixture& operator=(const GasMixture& other) { copy_from_mutable(other); return *this; }
         void mark_immutable();
         inline bool is_immutable() const {return immutable;}
-
+        mutable std::recursive_mutex mutex;
         float heat_capacity() const;
         float heat_capacity_archived() const;
 		void set_min_heat_capacity(float n);

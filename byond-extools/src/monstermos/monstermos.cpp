@@ -15,6 +15,8 @@
 #include <utility>
 #include <tuple>
 #include <thread>
+#include <condition_variable>
+#include <algorithm>
 
 using namespace monstermos::constants;
 
@@ -136,7 +138,9 @@ trvh gasmixture_merge(unsigned int args_len, Value* args, Value src)
 {
 	if (args_len < 1)
 		return Value::Null();
-	get_gas_mixture(src)->merge(*get_gas_mixture(args[0]));
+	auto src_gas = get_gas_mixture(src);
+	src_gas->archive();
+	src_gas->merge(*get_gas_mixture(args[0]));
 	return Value::Null();
 }
 
@@ -195,7 +199,7 @@ trvh gasmixture_set_temperature(unsigned int args_len, Value* args, Value src)
 	if (std::isnan(vf) || std::isinf(vf)) {
 		Runtime("Attempt to set temperature to NaN or Infinity");
 	} else {
-		GasMixture &src_gas = *get_gas_mixture(src);
+		auto &src_gas = *get_gas_mixture(src);
 		src_gas.set_temperature(vf);
 		src_gas.set_dirty(true);
 	}
@@ -221,7 +225,7 @@ trvh gasmixture_set_moles(unsigned int args_len, Value* args, Value src)
 	if (args_len < 2 || args[0].type != DATUM_TYPEPATH)
 		return Value::Null();
 	int index = gas_ids[args[0].value];
-	GasMixture &src_gas = *get_gas_mixture(src);
+	auto &src_gas = *get_gas_mixture(src);
 	src_gas.set_moles(index, args[1].valuef);
 	src_gas.set_dirty(true);
 	return Value::Null();
@@ -474,6 +478,7 @@ trvh SSair_get_amt_excited_groups(unsigned int args_len, Value* args, Value src)
 
 std::mutex process_mutex;
 std::mutex done_mutex;
+std::condition_variable process_cv;
 std::unordered_set<Tile*> active_turfs;
 std::list<Tile*> active_turfs_currentrun;
 std::list< std::tuple< Tile*, std::vector<Tile*>, int, bool > > processing_turfs;
@@ -537,8 +542,6 @@ trvh SSair_done_length(unsigned int args_len, Value* args, Value src)
 	return Value((float)(done_processing_turfs.size()));
 }
 
-#include <algorithm>
-
 trvh SSair_get_active_turfs(unsigned int args_len, Value* args, Value src)
 {
 	List l(CreateList(0));
@@ -558,19 +561,28 @@ trvh ssair_process_active_turfs(unsigned int args_len, Value* args, Value src)
 			active_turfs_currentrun.push_back(t);
 		});
 	}
+	std::unique_lock process_lock(process_mutex,std::defer_lock);
+	std::list< std::tuple< Tile*, std::vector<Tile*>, int, bool > > priv_process_turfs;
 	while(active_turfs_currentrun.size()) {
 		Tile& cur_turf = *active_turfs_currentrun.front();
 		active_turfs_currentrun.pop_front();
 		auto res = cur_turf.pre_process_cell(fire_count);
 		if(std::get<1>(res) >= 0)
 		{
-			std::unique_lock<std::mutex> lock(process_mutex);
-			processing_turfs.push_back(std::tuple_cat(std::make_tuple(&cur_turf),res));
+			priv_process_turfs.push_back(std::tuple_cat(std::make_tuple(&cur_turf),res));
 		}
 		if (sw.peek() > time_limit) {
+			process_lock.lock();
+			processing_turfs.splice(processing_turfs.cend(),priv_process_turfs);
+			process_lock.unlock();
+			process_cv.notify_all();
 			return Value::True();
 		}
 	}
+	process_lock.lock();
+	processing_turfs.splice(processing_turfs.cend(),priv_process_turfs);
+	process_lock.unlock();
+	process_cv.notify_all();
 	return Value::False();
 }
 
@@ -578,25 +590,42 @@ bool continue_processing_atmos = true;
 
 void air_process_loop()
 {
+	std::unique_lock process_lock(process_mutex,std::defer_lock);
+	std::unique_lock done_lock(done_mutex,std::defer_lock);
+	std::list<std::pair < Tile*, std::vector< std::pair<Tile*, float> > > > priv_done_processing_turfs;
 	while(continue_processing_atmos)
 	{
-		if(processing_turfs.size())
+		if(processing_turfs.size() || priv_done_processing_turfs.size())
 		{
-			process_mutex.lock();
-			auto payload = processing_turfs.front();
-			processing_turfs.pop_front();
-			process_mutex.unlock();
-			auto [ tile, enemy_tiles, adjacent_tiles, has_planetary_atmos ] = payload;
-			auto differences = tile->process_cell(enemy_tiles,adjacent_tiles,has_planetary_atmos);
+			if(processing_turfs.size() && process_lock.try_lock())
 			{
-				std::unique_lock<std::mutex> lock(done_mutex);
-				done_processing_turfs.push_back(make_pair(tile,differences));
+				auto payload = processing_turfs.front();
+				processing_turfs.pop_front();
+				auto [ tile, enemy_tiles, adjacent_tiles, has_planetary_atmos ] = payload;
+				if(tile->air->mutex.try_lock())
+				{
+					process_lock.unlock();
+					auto differences = tile->process_cell(enemy_tiles,adjacent_tiles,has_planetary_atmos);
+					priv_done_processing_turfs.push_back(make_pair(tile,differences));
+					tile->air->mutex.unlock();
+				}
+				else
+				{
+					processing_turfs.push_back(payload);
+					process_lock.unlock();
+				}
+			}
+			if(priv_done_processing_turfs.size() && done_lock.try_lock())
+			{
+				done_processing_turfs.splice(done_processing_turfs.cend(),priv_done_processing_turfs);
+				done_lock.unlock();
 			}
 		}
 		else
 		{
-			std::this_thread::yield();
-			std::this_thread::sleep_for(std::chrono::milliseconds(10));
+			process_lock.lock();
+			process_cv.wait(process_lock);
+			process_lock.unlock();
 		}
 	}
 }
@@ -605,11 +634,10 @@ trvh ssair_post_process_turfs(unsigned int args_len, Value* args, Value src)
 {
 	auto sw = Stopwatch();
 	float time_limit = args[1] * 100000.0f;
+	std::scoped_lock lock(done_mutex);
 	while(done_processing_turfs.size()) {
-		done_mutex.lock();
 		auto cur_turf = done_processing_turfs.front();
 		done_processing_turfs.pop_front();
-		done_mutex.unlock();
 		cur_turf.first->post_process_cell(cur_turf.second);
 		if (sw.peek() > time_limit) {
 			return Value::True();
