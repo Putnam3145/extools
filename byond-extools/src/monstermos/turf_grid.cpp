@@ -70,45 +70,30 @@ void Tile::update_air_ref() {
 extern Value SSair;
 std::vector<std::weak_ptr<ExcitedGroup>> excited_groups;
 
-std::tuple< std::vector<Tile*>, int, bool > Tile::pre_process_cell(int fire_count)
-{
-	if (!SSair) return std::make_tuple(std::vector<Tile*>(),-1,false);
+void add_to_active(Tile* t);
+
+std::vector< std::pair<Tile*, float> > Tile::process_cell(int fire_count) {
+	if (!SSair) return {};
 	if (!air) {
 		std::string message = (std::string("process_cell called on turf with no air! ") + std::to_string(turf_ref.value));
 		Runtime((char*)message.c_str()); // ree why doesn't it accept const
-		return std::make_tuple(std::vector<Tile*>(),-1,false);
+		return {};;
 	}
 	std::vector<Tile*> enemy_tiles;
 	int adjacent_turfs_length = 0;
-	if (turf_ref.get_by_id(str_id_archived_cycle) < fire_count) {
-		archive(fire_count);
-	}
-	SetVariable(turf_ref.type, turf_ref.value, str_id_current_cycle, Value(float(fire_count)));
+	air->archive();
 	for (int i = 0; i < 6; i++) {
 		if (adjacent_bits & (1 << i)) adjacent_turfs_length++;
 	}
+	bool has_planetary_atmos = planet_atmos_info != nullptr;
+	if(has_planetary_atmos) adjacent_turfs_length++;
+	std::vector< std::pair<Tile*, float> > ret;
 	for (int i = 0; i < 6; i++) {
 		if (!(adjacent_bits & (1 << i))) continue;
 		Tile& enemy_tile = *adjacent[i];
 		if (!enemy_tile.air) continue; // having no air is bad I think or something.
 		if (fire_count <= enemy_tile.turf_ref.get_by_id(str_id_current_cycle)) continue;
 		enemy_tile.archive(fire_count);
-		enemy_tiles.push_back(&enemy_tile);
-	}
-	bool has_planetary_atmos = turf_ref.get_by_id(str_id_planetary_atmos).valuef;
-	if(has_planetary_atmos) update_planet_atmos();
-	return make_tuple(enemy_tiles,adjacent_turfs_length,has_planetary_atmos);
-}
-
-void add_to_active(Tile* t);
-
-std::vector< std::pair<Tile*, float> > Tile::process_cell(std::vector<Tile*> tiles, int adjacent_turfs_length, bool has_planetary_atmos) {
-	if(has_planetary_atmos) adjacent_turfs_length++;
-	atmos_cooldown++;
-	std::vector< std::pair<Tile*, float> > ret;
-	for(int i = 0;i < tiles.size(); i++)
-	{
-		Tile& enemy_tile = *tiles[i];
 		bool should_share_air = false;
 
 		if (excited_group && enemy_tile.excited_group) {
@@ -143,7 +128,7 @@ std::vector< std::pair<Tile*, float> > Tile::process_cell(std::vector<Tile*> til
 		}
 	}
 	if (has_planetary_atmos) {
-		if (air->compare(planet_atmos_info->last_mix)) {
+		if (air->compare(planet_atmos_info->last_mix) != -2) {
 			if (!excited_group) {
 				std::shared_ptr<ExcitedGroup> eg = std::make_shared<ExcitedGroup>();
 				eg->initialize();
@@ -153,13 +138,15 @@ std::vector< std::pair<Tile*, float> > Tile::process_cell(std::vector<Tile*> til
 			last_share_check();
 		}
 	}
+	atmos_cooldown++;
 	return ret;
 }
 
 void remove_from_active(Tile* t);
 
-void Tile::post_process_cell(std::vector< std::pair<Tile*, float> > differences)
+void Tile::post_process_cell(std::vector< std::pair<Tile*, float> > differences,int fire_count)
 {
+	SetVariable(turf_ref.type, turf_ref.value, str_id_current_cycle, Value(float(fire_count)));
 	for(int i = 0; i < differences.size(); i++)
 	{
 		Tile& enemy_tile = *differences[i].first;
@@ -297,10 +284,14 @@ void Tile::finalize_eq_neighbors(float *transfer_dirs) {
 		}
 	}
 }
+#include <atomic>
+
+extern std::atomic<int> MONSTERMOS_TURF_LIMIT;
+extern std::atomic<int> MONSTERMOS_HARD_TURF_LIMIT;
 
 // This proc has a worst-case running time of about O(n^2), but this is
 // is really rare. Otherwise you get more like O(n*logd(n)) (there's a sort in there), or if you get lucky its faster.
-void Tile::equalize_pressure_in_zone(int cyclenum) {
+std::pair< std::vector<Tile*>, std::vector< std::pair<Tile*,Tile* > > > Tile::equalize_pressure_in_zone(int cyclenum) {
 	// okay I lied in the proc name it equalizes moles not pressure. Pressure is impossible.
 	// wanna know why? well let's say you have two turfs. One of them is 101.375 kPA and the other is 101.375 kPa.
 	// When they mix what's the pressure gonna be, before any reactions occur? If you guessed 1483.62 kPa you'd be right,
@@ -308,10 +299,7 @@ void Tile::equalize_pressure_in_zone(int cyclenum) {
 	// and that's just the way the math works out in SS13. And there's no reactions going on - hyper-noblium stops all reactions from happening.
 	// I'm pretty sure real gases don't work this way. Oh yeah this property can be used to make bombs too I guess so thats neat
 
-	const int MONSTERMOS_TURF_LIMIT = SSair.get_by_id(str_id_monstermos_turf_limit);
-	const int MONSTERMOS_HARD_TURF_LIMIT = SSair.get_by_id(str_id_monstermos_hard_turf_limit);
-
-	if (!air || (monstermos_info && monstermos_info->last_cycle >= cyclenum)) return; // if we're already done it then piss off.
+	if (!air || (monstermos_info && monstermos_info->last_cycle >= cyclenum)) return {}; // if we're already done it then piss off.
 
 	if (monstermos_info)
 		*monstermos_info = MonstermosInfo(); // null it out.
@@ -333,12 +321,11 @@ void Tile::equalize_pressure_in_zone(int cyclenum) {
 	}
 	if (!run_monstermos) { // if theres no need don't bother
 		monstermos_info->last_cycle = cyclenum;
-		return;
+		return {};
 	}
 
-
-	if (turf_ref.get_by_id(str_id_planetary_atmos).valuef) {
-		return; // nah, let's not lag the server trying to process lavaland please.
+	if (planet_atmos_info != nullptr) {
+		return {}; // nah, let's not lag the server trying to process lavaland please.
 	}
 
 	// it has been deemed necessary. Now to figure out which turfs are involved.
@@ -356,7 +343,7 @@ void Tile::equalize_pressure_in_zone(int cyclenum) {
 		if (i < MONSTERMOS_TURF_LIMIT) {
 			float turf_moles = exploring->air->total_moles();
 			exploring->monstermos_info->mole_delta = turf_moles;
-			if (exploring->turf_ref.get_by_id(str_id_planetary_atmos).valuef) {
+			if (exploring->planet_atmos_info != nullptr) {
 				planet_turfs.push_back(exploring);
 				exploring->monstermos_info->is_planet = true;
 				continue;
@@ -563,7 +550,7 @@ void Tile::equalize_pressure_in_zone(int cyclenum) {
 			}
 		}
 	}
-
+	std::vector< std::pair < Tile*, Tile* > > firelock_considerations;
 	if (planet_turfs.size()) { // now handle planet turfs
 		Tile *sample = planet_turfs[0];
 		sample->update_planet_atmos();
@@ -587,7 +574,7 @@ void Tile::equalize_pressure_in_zone(int cyclenum) {
 				if (!tile2->monstermos_info || tile2->monstermos_info->last_queue_cycle != queue_cycle) continue;
 				if (tile2->monstermos_info->last_slow_queue_cycle == queue_cycle_slow) continue;
 				if (tile2->monstermos_info->is_planet) continue;
-				tile->turf_ref.invoke("consider_firelocks", { tile2->turf_ref });
+				firelock_considerations.push_back(std::make_pair(tile,tile2));
 				if (tile->adjacent_bits & (1 << j)) {
 					tile2->monstermos_info->last_slow_queue_cycle = queue_cycle_slow;
 					tile2->monstermos_info->curr_transfer_dir = opp_dir_index[j];
@@ -607,21 +594,7 @@ void Tile::equalize_pressure_in_zone(int cyclenum) {
 			tile->monstermos_info->mole_delta = target_delta;
 		}
 	}
-	for (int i = 0; i < turfs.size(); i++) {
-		turfs[i]->finalize_eq();
-	}
-	for (int i = 0; i < turfs.size(); i++) {
-		Tile *tile = turfs[i];
-		for (int j = 0; j < 6; j++) {
-			if (!(tile->adjacent_bits & (1 << j))) continue;
-			Tile *tile2 = tile->adjacent[j];
-			if (!tile2->air) continue;
-			if (tile2->air->compare(*air) != -2) {
-				SSair.invoke("add_to_active", { tile->turf_ref });
-				break;
-			}
-		}
-	}
+	return std::make_pair(turfs,firelock_considerations);
 }
 
 void Tile::explosively_depressurize(int cyclenum) {

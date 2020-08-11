@@ -23,11 +23,11 @@ const float BREATH_VOLUME			= 0.5;		//liters in a normal breath
 const float BREATH_PERCENTAGE		= (BREATH_VOLUME/CELL_VOLUME);					//Amount of air to take a from a tile
 
 //EXCITED GROUPS
-const int EXCITED_GROUP_BREAKDOWN_CYCLES				= 4;		//number of FULL air controller ticks before an excited group breaks down (averages gas contents across turfs)
-const int EXCITED_GROUP_DISMANTLE_CYCLES				= 16;		//number of FULL air controller ticks before an excited group dismantles and removes its turfs from active
+const int EXCITED_GROUP_BREAKDOWN_CYCLES				= 10;		//number of FULL air controller ticks before an excited group breaks down (averages gas contents across turfs)
+const int EXCITED_GROUP_DISMANTLE_CYCLES				= 40;		//number of FULL air controller ticks before an excited group dismantles and removes its turfs from active
 
-const float MINIMUM_AIR_RATIO_TO_SUSPEND				= 0.1;		//Ratio of air that must move to/from a tile to reset group processing
-const float MINIMUM_AIR_RATIO_TO_MOVE					= 0.001;	//Minimum ratio of air that must move to/from a tile
+const float MINIMUM_AIR_RATIO_TO_SUSPEND				= 0.01;		//Ratio of air that must move to/from a tile to reset group processing
+const float MINIMUM_AIR_RATIO_TO_MOVE					= 0.0001;	//Minimum ratio of air that must move to/from a tile
 const float MINIMUM_AIR_TO_SUSPEND						= (MOLES_CELLSTANDARD*MINIMUM_AIR_RATIO_TO_SUSPEND);	//Minimum amount of air that has to move before a group processing can be suspended
 const float MINIMUM_MOLES_DELTA_TO_MOVE					= (MOLES_CELLSTANDARD*MINIMUM_AIR_RATIO_TO_MOVE); //Either this must be active
 const float MINIMUM_TEMPERATURE_TO_MOVE					= (T20C+100.0);			//or this (or both, obviously)

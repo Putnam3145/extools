@@ -17,16 +17,15 @@ struct Tile
     Tile();
 	void update_air_ref();
 	void update_adjacent(TurfGrid &grid);
-	std::tuple< std::vector<Tile*>, int, bool > pre_process_cell(int fire_count);
-	std::vector< std::pair<Tile*, float> > process_cell(std::vector<Tile*> tiles, int adjacent, bool planetary);
-	void post_process_cell(std::vector< std::pair<Tile*, float> >);
+	std::vector< std::pair<Tile*, float> > process_cell(int fire_count);
+	void post_process_cell(std::vector< std::pair<Tile*, float> >, int);
 	void archive(int fire_count);
 	void last_share_check();
 	void update_planet_atmos();
 	void adjust_eq_movement(int dir, float amount);
 	void finalize_eq();
 	void finalize_eq_neighbors(float *transfer_dirs);
-	void equalize_pressure_in_zone(int cyclenum);
+	std::pair< std::vector<Tile*>, std::vector< std::pair<Tile*,Tile* > > > equalize_pressure_in_zone(int cyclenum);
 	void explosively_depressurize(int cyclenum);
 	// adjacent tiles in the order NORTH,SOUTH,EAST,WEST,UP,DOWN.
 	// 
