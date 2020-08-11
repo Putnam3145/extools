@@ -141,17 +141,16 @@ std::vector< std::pair<Tile*, float> > Tile::process_cell(std::vector<Tile*> til
 			ret.push_back({&enemy_tile,difference});
 			last_share_check();
 		}
-
-		if (has_planetary_atmos) {
-			if (air->compare(planet_atmos_info->last_mix)) {
-				if (!excited_group) {
-					std::shared_ptr<ExcitedGroup> eg = std::make_shared<ExcitedGroup>();
-					eg->initialize();
-					eg->add_turf(*this);
-				}
-				air->share(planet_atmos_info->last_mix, adjacent_turfs_length);
-				last_share_check();
+	}
+	if (has_planetary_atmos) {
+		if (air->compare(planet_atmos_info->last_mix)) {
+			if (!excited_group) {
+				std::shared_ptr<ExcitedGroup> eg = std::make_shared<ExcitedGroup>();
+				eg->initialize();
+				eg->add_turf(*this);
 			}
+			air->share(planet_atmos_info->last_mix, adjacent_turfs_length);
+			last_share_check();
 		}
 	}
 	return ret;
