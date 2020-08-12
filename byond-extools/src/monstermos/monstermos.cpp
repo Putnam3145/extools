@@ -10,7 +10,9 @@
 #include <chrono>
 #include <algorithm>
 #include <list>
+#include <forward_list>
 #include <unordered_set>
+#include <set>
 #include <mutex>
 #include <utility>
 #include <tuple>
@@ -33,6 +35,7 @@ std::vector<Value> gas_id_to_type;
 std::vector<std::shared_ptr<Reaction>> cached_reactions;
 TurfGrid all_turfs;
 Value SSair;
+Value SSair_turfs;
 int str_id_extools_pointer;
 int gas_mixture_count = 0;
 float gas_moles_visible[TOTAL_NUM_GASES];
@@ -59,10 +62,28 @@ trvh gasmixture_register(unsigned int args_len, Value* args, Value src)
 	return Value::Null();
 }
 
+
+/**
+ * Due to the architecture of the system, only one mutex is necessary.
+ * It's locked whenever any air_turfs function is running, then unlocked
+ * when the air_turfs function finishes. Meanwhile, the second thread
+ * locks it when it is working on a single member of its current run,
+ * and unlocks it after working on only one. This naturally leads to a 
+ * sort of "priority" system, where the main thread is given precedence
+ * over the atmos thread when it comes to atmos operations.
+ * This also means that individual gas mixtures don't need mutexes--
+ * either the turf thread is operating on the mixtures or the main thread is,
+ * never both.
+ * This is a recursive_mutex because sometimes the main thread can lock
+ * multiple layers deep--it won't do so for the atmos thread.
+*/
+std::recursive_mutex process_mutex;
+
 trvh gasmixture_unregister(unsigned int args_len, Value* args, Value src)
 {
 	uint32_t v = src.get_by_id(str_id_extools_pointer).value;
 	if (v != 0) {
+		std::scoped_lock lock(process_mutex);
 		std::shared_ptr<GasMixture> *gm = (std::shared_ptr<GasMixture> *)v;
 		delete gm;
 		gas_mixture_count--;
@@ -131,6 +152,7 @@ trvh gasmixture_thermal_energy(unsigned int args_len, Value* args, Value src)
 
 trvh gasmixture_archive(unsigned int args_len, Value* args, Value src)
 {
+	std::scoped_lock lock(process_mutex);
 	get_gas_mixture(src)->archive();
 	return Value::Null();
 }
@@ -140,8 +162,11 @@ trvh gasmixture_merge(unsigned int args_len, Value* args, Value src)
 	if (args_len < 1)
 		return Value::Null();
 	auto src_gas = get_gas_mixture(src);
+	bool lock = src_gas->is_tile();
+	if(lock) process_mutex.lock();
 	src_gas->archive();
 	src_gas->merge(*get_gas_mixture(args[0]));
+	if(lock) process_mutex.unlock();
 	return Value::Null();
 }
 
@@ -149,7 +174,11 @@ trvh gasmixture_remove_ratio(unsigned int args_len, Value* args, Value src)
 {
 	if (args_len < 2)
 		return Value::Null();
-	get_gas_mixture(args[0])->copy_from_mutable(get_gas_mixture(src)->remove_ratio(args[1].valuef));
+	auto src_gas = get_gas_mixture(src);
+	bool lock = src_gas->is_tile();
+	if(lock) process_mutex.lock();
+	get_gas_mixture(args[0])->copy_from_mutable(src_gas->remove_ratio(args[1].valuef));
+	if(lock) process_mutex.unlock();
 	return Value::Null();
 }
 
@@ -157,7 +186,11 @@ trvh gasmixture_remove(unsigned int args_len, Value* args, Value src)
 {
 	if (args_len < 2)
 		return Value::Null();
-	get_gas_mixture(args[0])->copy_from_mutable(get_gas_mixture(src)->remove(args[1].valuef));
+	auto src_gas = get_gas_mixture(src);
+	bool lock = src_gas->is_tile();
+	if(lock) process_mutex.lock();
+	get_gas_mixture(args[0])->copy_from_mutable(src_gas->remove(args[1].valuef));
+	if(lock) process_mutex.unlock();
 	return Value::Null();
 }
 
@@ -165,7 +198,11 @@ trvh gasmixture_copy_from(unsigned int args_len, Value* args, Value src)
 {
 	if (args_len < 1)
 		return Value::Null();
-	get_gas_mixture(src)->copy_from_mutable(*get_gas_mixture(args[0]));
+	auto src_gas = get_gas_mixture(src);
+	bool lock = src_gas->is_tile();
+	if(lock) process_mutex.lock();
+	src_gas->copy_from_mutable(*get_gas_mixture(args[0]));
+	if(lock) process_mutex.unlock();
 	return Value::Null();
 }
 
@@ -173,7 +210,11 @@ trvh gasmixture_share(unsigned int args_len, Value* args, Value src)
 {
 	if (args_len < 1)
 		return Value::Null();
-	Value ret = Value(get_gas_mixture(src)->share(*get_gas_mixture(args[0]), args_len >= 2 ? args[1].valuef : 4));
+	auto src_gas = get_gas_mixture(src);
+	bool lock = src_gas->is_tile();
+	if(lock) process_mutex.lock();
+	Value ret = Value(src_gas->share(*get_gas_mixture(args[0]), args_len >= 2 ? args[1].valuef : 4));
+	if(lock) process_mutex.unlock();
 	return ret;
 }
 
@@ -201,8 +242,11 @@ trvh gasmixture_set_temperature(unsigned int args_len, Value* args, Value src)
 		Runtime("Attempt to set temperature to NaN or Infinity");
 	} else {
 		auto &src_gas = *get_gas_mixture(src);
+		bool lock = src_gas.is_tile();
+		if(lock) process_mutex.lock();
 		src_gas.set_temperature(vf);
 		src_gas.set_dirty(true);
+		if(lock) process_mutex.unlock();
 	}
 	return Value::Null();
 }
@@ -227,8 +271,11 @@ trvh gasmixture_set_moles(unsigned int args_len, Value* args, Value src)
 		return Value::Null();
 	int index = gas_ids[args[0].value];
 	auto &src_gas = *get_gas_mixture(src);
+	bool lock = src_gas.is_tile();
+	if(lock) process_mutex.lock();
 	src_gas.set_moles(index, args[1].valuef);
 	src_gas.set_dirty(true);
+	if(lock) process_mutex.unlock();
 	return Value::Null();
 }
 
@@ -238,9 +285,11 @@ trvh gasmixture_scrub_into(unsigned int args_len, Value* args, Value src)
 		return Value::Null();
 	GasMixture &src_gas = *get_gas_mixture(src);
 	GasMixture &dest_gas = *get_gas_mixture(args[0]);
+	bool lock = (src_gas.is_tile() || dest_gas.is_tile());
 	Container gases_to_scrub = args[1];
 	int num_gases = gases_to_scrub.length();
 	GasMixture buffer(CELL_VOLUME);
+	if(lock) process_mutex.lock();
 	buffer.set_temperature(src_gas.get_temperature());
 	for (int i = 0; i < num_gases; i++) {
 		Value typepath = gases_to_scrub[i];
@@ -250,6 +299,7 @@ trvh gasmixture_scrub_into(unsigned int args_len, Value* args, Value src)
 		src_gas.set_moles(index, 0);
 	}
 	dest_gas.merge(buffer);
+	if(lock) process_mutex.unlock();
 	IncRefCount(args[0].type, args[0].value);
 	return args[0];
 }
@@ -301,6 +351,8 @@ trvh gasmixture_react(unsigned int args_len, Value* args, Value src)
 	{
 		holder = args[0];
 	}
+	bool lock = src_gas.is_tile();
+	if(lock) process_mutex.lock();
 	for(int i=0;i<cached_reactions.size();i++)
 	{
 		auto reaction = cached_reactions[i];
@@ -312,12 +364,14 @@ trvh gasmixture_react(unsigned int args_len, Value* args, Value src)
 		if(ret & STOP_REACTIONS) return Value((float)ret);
 	}
 	src_gas.set_dirty(ret != NO_REACTION);
+	if(lock) process_mutex.unlock();
 	return Value((float)ret);
 }
 
 trvh turf_update_adjacent(unsigned int args_len, Value* args, Value src)
 {
 	if (src.type != TURF) { return Value::Null(); }
+	std::scoped_lock lock(process_mutex);
 	Tile *tile = all_turfs.get(src.value);
 	if (tile != nullptr) {
 		tile->update_adjacent(all_turfs);
@@ -328,6 +382,7 @@ trvh turf_update_adjacent(unsigned int args_len, Value* args, Value src)
 trvh turf_update_air_ref(unsigned int args_len, Value* args, Value src)
 {
 	if (src.type != TURF) { return Value::Null(); }
+	std::scoped_lock lock(process_mutex);
 	Tile *tile = all_turfs.get(src.value);
 	if (tile != nullptr) {
 		tile->update_air_ref();
@@ -338,6 +393,7 @@ trvh turf_update_air_ref(unsigned int args_len, Value* args, Value src)
 trvh turf_update_planet_atmos(unsigned int args_len, Value* args, Value src)
 {
 	if (src.type != TURF) { return Value::Null(); }
+	std::scoped_lock lock(process_mutex);
 	Tile *tile = all_turfs.get(src.value);
 	if (tile != nullptr) {
 		tile->update_planet_atmos();
@@ -348,6 +404,7 @@ trvh turf_update_planet_atmos(unsigned int args_len, Value* args, Value src)
 trvh turf_eg_reset_cooldowns(unsigned int args_len, Value* args, Value src)
 {
 	if (src.type != TURF) { return Value::Null(); }
+	std::scoped_lock lock(process_mutex);
 	Tile *tile = all_turfs.get(src.value);
 	if (tile != nullptr) {
 		if (tile->excited_group) {
@@ -360,6 +417,7 @@ trvh turf_eg_reset_cooldowns(unsigned int args_len, Value* args, Value src)
 trvh turf_eg_garbage_collect(unsigned int args_len, Value* args, Value src)
 {
 	if (src.type != TURF) { return Value::Null(); }
+	std::scoped_lock lock(process_mutex);
 	Tile *tile = all_turfs.get(src.value);
 	if (tile != nullptr) {
 		if (tile->excited_group) {
@@ -383,6 +441,7 @@ trvh turf_get_excited(unsigned int args_len, Value* args, Value src)
 trvh turf_set_excited(unsigned int args_len, Value* args, Value src)
 {
 	if (src.type != TURF) { return Value::Null(); }
+	std::scoped_lock lock(process_mutex);
 	Tile *tile = all_turfs.get(src.value);
 	if (tile != nullptr) {
 		tile->excited = args_len > 0 ? (bool)args[0] : false;
@@ -392,6 +451,7 @@ trvh turf_set_excited(unsigned int args_len, Value* args, Value src)
 
 trvh turf_eq(unsigned int args_len, Value* args, Value src) {
 	if (src.type != TURF || args_len < 1) { return Value::Null(); }
+	std::scoped_lock lock(process_mutex);
 	Tile *tile = all_turfs.get(src.value);
 	if (tile != nullptr) {
 		tile->equalize_pressure_in_zone(args[0]);
@@ -404,6 +464,7 @@ trvh turf_update_visuals(unsigned int args_len, Value* args, Value src) {
 	if (src.type != TURF) { return Value::Null(); }
 	Tile* tile = all_turfs.get(src.value);
 	if (!tile->air) return Value::Null();
+	std::scoped_lock lock(process_mutex);
 	GasMixture& gm = *tile->air;
 	Value old_overlay_types_val = src.get_by_id(str_id_atmos_overlay_types);
 	std::vector<Value> overlay_types;
@@ -441,58 +502,113 @@ trvh turf_update_visuals(unsigned int args_len, Value* args, Value src) {
 	return Value::Null();
 }
 
+// I got annoyed with doing the math so often so I made a class that does it
 class Stopwatch {
 	private:
-		std::chrono::time_point<std::chrono::steady_clock> start;
+		bool running;
+		std::chrono::time_point<std::chrono::high_resolution_clock> begin;
+		std::chrono::time_point<std::chrono::high_resolution_clock> end;
 	public:
-		Stopwatch() {
-			start = std::chrono::steady_clock::now();
+		Stopwatch(bool autostart = true) {
+			if(autostart)
+			{
+				start();
+			}
+			else
+			{
+				running = false;
+			}
 		}
-		void restart() {
-			start = std::chrono::steady_clock::now();
+		void start() {
+			begin = std::chrono::high_resolution_clock::now();
+			running = true;
 		}
 		int peek() {
-			auto end = std::chrono::steady_clock::now();
-			return std::chrono::duration_cast<std::chrono::microseconds>(end - start).count();
+			if(running) end = std::chrono::high_resolution_clock::now();
+			return std::chrono::duration_cast<std::chrono::microseconds>(end - begin).count();
+		}
+		void stop()
+		{
+			end = std::chrono::high_resolution_clock::now();
+			running = false;
 		}
 };
 
-std::mutex process_mutex;
-std::condition_variable process_cv;
+/* 
+	This is where the heart of multithreaded atmos is. The pieces bear explanation.
+	These comments rely on basic knowledge of concurrent programming. I expect you
+	to know what a mutex is for, what a condition variable is, and... well, really,
+	that's about it.
+*/
+
+/** 
+ * When the atmos thread is done for this tick, it waits on this.
+ * The main thread wakes it up every single time air_turfs/fire() is called.
+*/
+std::condition_variable_any process_cv;
+
+/**
+ * This is the replacement for the old byond active_turfs list.
+ * It uses a hash table instead of a red-black tree, which byond does,
+ * leading to O(1) addition/removal instead of O(logn)--in addition,
+ * this data structure is obviously specialized, while Byond's
+ * uses a confusing mix of a red-black tree and a resizable array.
+*/
 std::unordered_set<Tile*> active_turfs;
-std::list<Tile*> active_turfs_currentrun;
-std::list<std::pair< Tile*, Tile* > > turfs_to_firelock;
-std::list< std::tuple< Tile*, std::vector<Tile*>, int, bool > > processing_turfs;
+
+/**
+ * Due to the fact that pretty much anything can add to active_turfs 
+ * or excited_groups at any time, the thread needs to copy it once 
+ * per run, then go through the copy. For this purpose I've used an std::forward_list, 
+ * since we're only building then consuming it. This prevents us from using size() with it, 
+ * but that's immaterial--the thread is fast enough that you usually can't catch it doing work.
+*/
+std::forward_list<Tile*> active_turfs_currentrun;
+
+/// ditto
+std::forward_list<std::weak_ptr<ExcitedGroup>> excited_groups_currentrun;
+
+/**
+ * Byond functions cannot be called from another thread. Doing so inevitably
+ * leads to a memory access violation of some sort--a segfault.
+ * As such, when we're not on the main thread, any attempt to call
+ * update_visuals will be hijacked and sent to this set instead,
+ * and any attempt to call consider_firelocks will get sent to
+ * turfs_to_firelock.
+ * These are sets, rather than lists, because
+ * the low amortized performance cost of adding to a set
+ * is worth the performance gains from not duplicating
+ * entries--update_visuals and consider_firelocks
+ * will do nothing if called a second time in the same tick,
+ * which is how these work. We consume the entire set every time,
+ * so there's no "removal overhead"--we just clear it.
+*/
+std::unordered_set<Tile*> turfs_to_update_visuals_on;
+
+/// ditto
+std::set<std::pair< Tile*, Tile* > > turfs_to_firelock;
+
+/** 
+ * This is the queue that the atmos thread fills over the course of a tick.
+ * When the air_turfs subsystem reaches the post_process or equalize step,
+ * it consumes this list, running necessary byond functions on all of the turfs.
+*/
 std::list<std::pair < Tile*, std::vector< std::pair<Tile*, float> > > > done_processing_turfs;
+
+/// ditto
 std::list<Tile*> done_equalizing_turfs;
-std::atomic<int> SSair_fire_count;
 
-std::vector<std::weak_ptr<ExcitedGroup>> excited_groups_currentrun;
-trvh SSair_process_excited_groups(unsigned int args_len, Value* args, Value src) {
-	auto sw = Stopwatch();
-	float time_limit = args[1].valuef * 100000.0f;
-
-	if (args_len < 2) { return Value::Null(); }
-	if (!args[0]) {
-		excited_groups_currentrun = excited_groups; // this copies it.... right?
-	}
-	std::scoped_lock lock(process_mutex);
-	while (excited_groups_currentrun.size()) {
-		std::shared_ptr<ExcitedGroup> eg = excited_groups_currentrun.back().lock();
-		excited_groups_currentrun.pop_back();
-		if (!eg) continue;
-		eg->breakdown_cooldown++;
-		eg->dismantle_cooldown++;
-		if (eg->breakdown_cooldown >= EXCITED_GROUP_BREAKDOWN_CYCLES)
-			eg->self_breakdown();
-		if (eg->dismantle_cooldown >= EXCITED_GROUP_DISMANTLE_CYCLES)
-			eg->dismantle(true);
-		if (sw.peek() > time_limit) {
-			return Value::True();
-		}
-	}
-	return Value::False();
-}
+/**
+ * An atomic integer that is set every time air_turfs runs.
+ * This is set before the condition variable is notified,
+ * to make sure that the atmos thread is synchronized.
+ * Basically, we want the atmos thread to be another "part"
+ * of SSair--just one that happens to run in parallel.
+ * To this end, we make sure that the tick changes over
+ * before it starts a new run--two ticks in one tick
+ * would look quite odd, and might lead to issues.
+*/
+std::atomic<int> SSair_turfs_fire_count;
 
 trvh SSair_get_amt_excited_groups(unsigned int args_len, Value* args, Value src) {
 	return Value(excited_groups.size());
@@ -532,6 +648,7 @@ trvh SSair_remove_from_active(unsigned int args_len, Value* args, Value src)
 
 trvh SSair_clear_active_turfs(unsigned int args_len, Value* args, Value src)
 {
+	std::scoped_lock lock(process_mutex);
 	active_turfs.clear();
 	return Value::Null();
 }
@@ -541,14 +658,9 @@ trvh SSair_active_turf_length(unsigned int args_len, Value* args, Value src)
 	return Value((float)(active_turfs.size()));
 }
 
-trvh SSair_active_run_length(unsigned int args_len, Value* args, Value src)
+trvh SSair_done_equalizing_length(unsigned int args_len, Value* args, Value src)
 {
-	return Value((float)(active_turfs_currentrun.size()));
-}
-
-trvh SSair_processing_length(unsigned int args_len, Value* args, Value src)
-{
-	return Value((float)(processing_turfs.size()));
+	return Value((float)(done_equalizing_turfs.size()));
 }
 
 trvh SSair_done_length(unsigned int args_len, Value* args, Value src)
@@ -570,22 +682,45 @@ int str_id_monstermos_turf_limit, str_id_monstermos_hard_turf_limit;
 std::atomic<int> MONSTERMOS_TURF_LIMIT;
 std::atomic<int> MONSTERMOS_HARD_TURF_LIMIT;
 
+int str_id_air;
+int str_id_atmosadj;
+int str_id_is_openturf;
+int str_id_x, str_id_y, str_id_z;
+int str_id_current_cycle, str_id_archived_cycle, str_id_planetary_atmos, str_id_initial_gas_mix;
+int str_id_react, str_id_gas_reactions, str_id_consider_pressure_difference, str_id_update_visuals, str_id_floor_rip;
+
+
+/**
+ * This is run every single air_turfs fire().
+ * The turfs_to_firelock and turfs_to_update_visuals_on
+ * lists are of operations that should happen "right now"--
+ * I'd be doing them in the other thread if I could, but I can't.
+ * Thus, they should be done ASAP, heedless of performance--
+ * the performance cost for these operations is
+ * rather low anyway, mind.
+*/
 trvh SSair_wake_thread(unsigned int args_len,Value* args,Value src)
 {
 	MONSTERMOS_TURF_LIMIT = SSair.get_by_id(str_id_monstermos_turf_limit);
 	MONSTERMOS_HARD_TURF_LIMIT = SSair.get_by_id(str_id_monstermos_hard_turf_limit);
-	if(turfs_to_firelock.size()) // we want this to happen ASAP, so do it every tick
+	if(!turfs_to_firelock.empty()) // we want this to happen ASAP, so do it every tick
 	{
 		std::scoped_lock lock(process_mutex);
-		while(turfs_to_firelock.size())
-		{
-			auto turfs = turfs_to_firelock.front();
-			turfs_to_firelock.pop_front();
-			turfs.first->turf_ref.invoke("consider_firelocks", { turfs.second->turf_ref });
-		}
+		std::for_each(turfs_to_firelock.cbegin(),turfs_to_firelock.cend(),[](auto t) {
+			t.first->turf_ref.invoke("consider_firelocks", { t.second->turf_ref });
+		});
+		turfs_to_firelock.clear();
 	}
-	auto changed = SSair_fire_count.exchange(SSair.get("times_fired"));
-	if(changed != SSair_fire_count.load()) 
+	if(!turfs_to_update_visuals_on.empty())
+	{
+		std::scoped_lock (process_mutex);
+		std::for_each(turfs_to_update_visuals_on.cbegin(),turfs_to_update_visuals_on.cend(),[](Tile* t) {
+			t->turf_ref.invoke_by_id(str_id_update_visuals,{});
+		});
+		turfs_to_update_visuals_on.clear();
+	}
+	auto changed = SSair_turfs_fire_count.exchange(SSair_turfs.get("times_fired"));
+	if(changed != SSair_turfs_fire_count.load()) 
 	{
 		process_cv.notify_all();
 		return Value::True();
@@ -593,84 +728,108 @@ trvh SSair_wake_thread(unsigned int args_len,Value* args,Value src)
 	return Value::False();
 }
 
-bool continue_processing_atmos = true;
-
 #define TICK_PROCESSING 0
 #define TICK_EQUALIZING 1
-#define TICK_DONE 2
+#define TICK_EXCITED_GROUPS 2
+#define TICK_WAIT 3
+
+bool continue_processing_atmos = true;
 
 std::thread processing_loop;
 
 void air_process_loop()
 {
-	int last_fire_start = 0;
-	short cur_step = -1;
 	std::unique_lock process_lock(process_mutex);
 	process_cv.wait(process_lock);
 	process_lock.unlock();
+	short cur_thread_step = TICK_WAIT;
+	int last_fire_start = SSair_turfs_fire_count;
 	while(continue_processing_atmos)
 	{
-		if(active_turfs_currentrun.size() == 0) 
+		if(process_lock.try_lock())
 		{
-			if(cur_step == TICK_DONE)
+			auto max_to_consider = active_turfs.size() * 1.1;
+			auto sw = Stopwatch();
+			while(cur_thread_step == TICK_EQUALIZING && sw.peek() < 2000)
 			{
-				if(SSair_fire_count == last_fire_start)
+				if(active_turfs_currentrun.empty() || done_equalizing_turfs.size() >= max_to_consider)
 				{
-					process_lock.lock();
-					process_cv.wait(process_lock);
-					process_lock.unlock();
+					cur_thread_step = TICK_PROCESSING;
+					active_turfs_currentrun.clear();
+					std::for_each(active_turfs.cbegin(),active_turfs.cend(),[](auto t) {
+						active_turfs_currentrun.push_front(t);
+					});
+					break;
 				}
-				cur_step = -1;
-			}
-			if(active_turfs.size())
-			{
-				cur_step++;
-				last_fire_start = SSair_fire_count;
-				std::for_each(active_turfs.begin(),active_turfs.end(),[](Tile* t) {
-					active_turfs_currentrun.push_back(t);
-				});
-			}
-		}
-		else if(process_mutex.try_lock())
-		{
-			if(cur_step == TICK_EQUALIZING)
-			{
 				auto cur_turf = active_turfs_currentrun.front();
 				active_turfs_currentrun.pop_front();
-				auto ret = cur_turf->equalize_pressure_in_zone(SSair_fire_count.load());
+				auto ret = cur_turf->equalize_pressure_in_zone(SSair_turfs_fire_count);
 				#pragma omp parallel
 				{
 					#pragma omp sections
 					{
-						std::for_each(ret.first.begin(),ret.first.end(),[](Tile* t) {
+						std::for_each(ret.first.cbegin(),ret.first.cend(),[](auto t) {
 							done_equalizing_turfs.push_back(t);
 						});
 					}
 					#pragma omp sections
 					{
-						std::for_each(ret.second.begin(),ret.second.end(),[](std::pair< Tile*, Tile* > tiles) {
-							turfs_to_firelock.push_back(tiles);
+						std::for_each(ret.second.cbegin(),ret.second.cend(),[](auto tiles) {
+							turfs_to_firelock.insert(tiles);
 						});
 					}
 				}
 			}
-			else if(cur_step == TICK_PROCESSING)
+			while(cur_thread_step == TICK_PROCESSING && sw.peek() < 2000)
 			{
+				if(active_turfs_currentrun.empty() || done_processing_turfs.size() >= max_to_consider)
+				{
+					cur_thread_step = TICK_EXCITED_GROUPS;
+					active_turfs_currentrun.clear();
+					std::for_each(excited_groups.cbegin(),excited_groups.cend(),[](auto eg) {
+						excited_groups_currentrun.push_front(eg);
+					});
+					break;
+				}
 				auto t = active_turfs_currentrun.front();
 				active_turfs_currentrun.pop_front();
-				auto differences = t->process_cell(SSair_fire_count.load());
+				auto differences = t->process_cell(SSair_turfs_fire_count);
 				done_processing_turfs.push_back(make_pair(t,differences));
 			}
-			else
+			while(cur_thread_step == TICK_EXCITED_GROUPS && sw.peek() < 2000)
 			{
-				active_turfs_currentrun.clear();
+				if(excited_groups_currentrun.empty())
+				{
+					cur_thread_step = TICK_WAIT;
+					break;
+				}
+				std::shared_ptr<ExcitedGroup> eg = excited_groups_currentrun.front().lock();
+				excited_groups_currentrun.pop_front();
+				if (eg)
+				{
+					eg->breakdown_cooldown++;
+					eg->dismantle_cooldown++;
+					if (eg->breakdown_cooldown >= EXCITED_GROUP_BREAKDOWN_CYCLES)
+						eg->self_breakdown();
+					if (eg->dismantle_cooldown >= EXCITED_GROUP_DISMANTLE_CYCLES)
+						eg->dismantle(true);
+				}
 			}
-			process_mutex.unlock();
+			if(cur_thread_step == TICK_WAIT)
+			{
+				while(last_fire_start == SSair_turfs_fire_count && continue_processing_atmos)
+				{
+					process_cv.wait(process_lock);
+				}
+				std::for_each(active_turfs.cbegin(),active_turfs.cend(),[](auto t) {
+					active_turfs_currentrun.push_front(t);
+				});
+				last_fire_start = SSair_turfs_fire_count;
+				cur_thread_step = TICK_EQUALIZING;
+			}
+			process_lock.unlock();
 		}
-		else
-		{
-			std::this_thread::yield();
-		}
+		std::this_thread::yield();
 	}
 }
 
@@ -678,8 +837,7 @@ trvh SSair_post_process_turfs(unsigned int args_len, Value* args, Value src)
 {
 	auto sw = Stopwatch();
 	float time_limit = args[1] * 100000.0f;
-	int fire_count = SSair.get("times_fired");
-	SSair_fire_count.store(fire_count);
+	int fire_count = SSair_turfs.get("times_fired");
 	std::scoped_lock lock(process_mutex);
 	while(done_processing_turfs.size()) {
 		auto cur_turf = done_processing_turfs.front();
@@ -754,6 +912,11 @@ trvh SSair_update_ssair(unsigned int args_len, Value* args, Value src) {
 	return Value::Null();
 }
 
+trvh SSair_turfs_update_ssair_turfs(unsigned int args_len, Value* args, Value src) {
+	SSair_turfs = src;
+	return Value::Null();
+}
+
 trvh SSair_update_gas_reactions(unsigned int args_len, Value* args, Value src) {
 	Container gas_reactions = SSair.get("gas_reactions");
 	cached_reactions.clear();
@@ -767,17 +930,21 @@ trvh SSair_update_gas_reactions(unsigned int args_len, Value* args, Value src) {
 	return Value::Null();
 }
 
-int str_id_air;
-int str_id_atmosadj;
-int str_id_is_openturf;
-int str_id_x, str_id_y, str_id_z;
-int str_id_current_cycle, str_id_archived_cycle, str_id_planetary_atmos, str_id_initial_gas_mix;
-int str_id_react, str_id_gas_reactions, str_id_consider_pressure_difference, str_id_update_visuals, str_id_floor_rip;
+std::thread::id main_thread_id = std::this_thread::get_id();
 
 trvh end_thread(unsigned int args_len, Value* args, Value src) {
 	continue_processing_atmos = false;
 	process_cv.notify_all();
 	processing_loop.join();
+	return Value::Null();
+}
+
+trvh restart_thread(unsigned int args_len, Value* args, Value src) {
+	continue_processing_atmos = false;
+	process_cv.notify_all();
+	processing_loop.join();
+	continue_processing_atmos = true;
+	processing_loop = std::thread(air_process_loop);
 	return Value::Null();
 }
 
@@ -807,6 +974,7 @@ const char* enable_monstermos()
 	str_id_monstermos_hard_turf_limit = Core::GetStringId("monstermos_turf_limit",true);
 
 	SSair = Value::Global().get("SSair");
+	SSair_turfs = Value::Global().get("SSair_turfs");
 	//Set up gas types map
 	std::vector<Value> nullvector = { Value(0.0f) };
 	Container gas_types_list = Core::get_proc("/proc/gas_types").call(nullvector);
@@ -870,22 +1038,22 @@ const char* enable_monstermos()
 	Core::get_proc("/turf/open/proc/equalize_pressure_in_zone").hook(turf_eq);
 	Core::get_proc("/turf/open/proc/update_visuals").hook(turf_update_visuals);
 	Core::get_proc("/world/proc/refresh_atmos_grid").hook(refresh_atmos_grid);
-	Core::get_proc("/datum/controller/subsystem/air/proc/process_excited_groups_extools").hook(SSair_process_excited_groups);
 	Core::get_proc("/datum/controller/subsystem/air/proc/post_process_turf_equalize_extools").hook(SSair_post_process_turf_equalize);
 	Core::get_proc("/datum/controller/subsystem/air/proc/post_process_turfs_extools").hook(SSair_post_process_turfs);
 	Core::get_proc("/datum/controller/subsystem/air_turfs/proc/wake_thread").hook(SSair_wake_thread);
 	Core::get_proc("/datum/controller/subsystem/air/proc/get_amt_excited_groups").hook(SSair_get_amt_excited_groups);
 	Core::get_proc("/datum/controller/subsystem/air/proc/extools_update_ssair").hook(SSair_update_ssair);
+	Core::get_proc("/datum/controller/subsystem/air_turfs/proc/extools_update_ssair_turfs").hook(SSair_turfs_update_ssair_turfs);
 	Core::get_proc("/datum/controller/subsystem/air/proc/extools_setup_gas_reactions").hook(SSair_update_gas_reactions);
 	Core::get_proc("/datum/controller/subsystem/air/proc/remove_from_active_extools").hook(SSair_remove_from_active);
 	Core::get_proc("/datum/controller/subsystem/air/proc/add_to_active_extools").hook(SSair_add_to_active);
 	Core::get_proc("/datum/controller/subsystem/air/proc/clear_active_turfs").hook(SSair_clear_active_turfs);
 	Core::get_proc("/datum/controller/subsystem/air/proc/active_turfs_length").hook(SSair_active_turf_length);
-	Core::get_proc("/datum/controller/subsystem/air/proc/cpp_currentrun_length").hook(SSair_active_run_length);
-	Core::get_proc("/datum/controller/subsystem/air/proc/processing_length").hook(SSair_processing_length);
 	Core::get_proc("/datum/controller/subsystem/air/proc/post_processing_length").hook(SSair_done_length);
+	Core::get_proc("/datum/controller/subsystem/air/proc/post_equalize_turf_length").hook(SSair_done_equalizing_length);
 	Core::get_proc("/datum/controller/subsystem/air/proc/get_active_turfs").hook(SSair_get_active_turfs);
 	Core::get_proc("/proc/destroy_extools_atmos_thread").hook(end_thread);
+	Core::get_proc("/proc/restart_extools_atmos_thread").hook(restart_thread);
 	processing_loop = std::thread(air_process_loop);
 	all_turfs.refresh();
 	return "ok";

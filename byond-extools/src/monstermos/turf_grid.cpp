@@ -4,8 +4,11 @@
 #include <algorithm>
 #include <cstring>
 #include <mutex>
+#include <thread>
 
 using namespace monstermos::constants;
+
+extern std::thread::id main_thread_id;
 
 Tile::Tile()
 {
@@ -57,6 +60,7 @@ void Tile::update_air_ref() {
 		Value air_ref = turf_ref.get_by_id(str_id_air);
 		if (air_ref.type == DATUM) {
 			air = get_gas_mixture(air_ref);
+			air->mark_tile();
 		}
 		else {
 			air.reset();
@@ -85,7 +89,7 @@ std::vector< std::pair<Tile*, float> > Tile::process_cell(int fire_count) {
 	for (int i = 0; i < 6; i++) {
 		if (adjacent_bits & (1 << i)) adjacent_turfs_length++;
 	}
-	bool has_planetary_atmos = planet_atmos_info != nullptr;
+	bool has_planetary_atmos = (bool) planet_atmos_info;
 	if(has_planetary_atmos) adjacent_turfs_length++;
 	std::vector< std::pair<Tile*, float> > ret;
 	for (int i = 0; i < 6; i++) {
@@ -324,7 +328,7 @@ std::pair< std::vector<Tile*>, std::vector< std::pair<Tile*,Tile* > > > Tile::eq
 		return {};
 	}
 
-	if (planet_atmos_info != nullptr) {
+	if (planet_atmos_info) {
 		return {}; // nah, let's not lag the server trying to process lavaland please.
 	}
 
@@ -343,7 +347,7 @@ std::pair< std::vector<Tile*>, std::vector< std::pair<Tile*,Tile* > > > Tile::eq
 		if (i < MONSTERMOS_TURF_LIMIT) {
 			float turf_moles = exploring->air->total_moles();
 			exploring->monstermos_info->mole_delta = turf_moles;
-			if (exploring->planet_atmos_info != nullptr) {
+			if (exploring->planet_atmos_info) {
 				planet_turfs.push_back(exploring);
 				exploring->monstermos_info->is_planet = true;
 				continue;
@@ -574,7 +578,14 @@ std::pair< std::vector<Tile*>, std::vector< std::pair<Tile*,Tile* > > > Tile::eq
 				if (!tile2->monstermos_info || tile2->monstermos_info->last_queue_cycle != queue_cycle) continue;
 				if (tile2->monstermos_info->last_slow_queue_cycle == queue_cycle_slow) continue;
 				if (tile2->monstermos_info->is_planet) continue;
-				firelock_considerations.push_back(std::make_pair(tile,tile2));
+				if(std::this_thread::get_id() == main_thread_id)
+				{
+					tile->turf_ref.invoke("consider_firelocks", { tile2->turf_ref });
+				}
+				else
+				{
+					firelock_considerations.push_back(std::make_pair(tile,tile2));
+				}
 				if (tile->adjacent_bits & (1 << j)) {
 					tile2->monstermos_info->last_slow_queue_cycle = queue_cycle_slow;
 					tile2->monstermos_info->curr_transfer_dir = opp_dir_index[j];
@@ -803,6 +814,11 @@ void ExcitedGroup::add_turf(Tile &tile) {
 	tile.excited_group = shared_from_this();
 	reset_cooldowns();
 }
+
+#include <unordered_set>
+
+extern std::unordered_set<Tile*> turfs_to_update_visuals_on;
+
 void ExcitedGroup::self_breakdown(bool space_is_all_consuming) {
 	GasMixture combined(CELL_VOLUME);
 
@@ -817,16 +833,22 @@ void ExcitedGroup::self_breakdown(bool space_is_all_consuming) {
 		}
 	}
 	combined.multiply(1 / (float)turf_list_size);
+	const auto cur_thread_id = std::this_thread::get_id();
 	for (int i = 0; i < turf_list_size; i++){
 		Tile &tile = *turf_list[i];
 		tile.air->copy_from_mutable(combined);
 		tile.atmos_cooldown = 0;
-		tile.turf_ref.invoke("update_visuals", {});
+		if(cur_thread_id == main_thread_id)
+		{
+			tile.turf_ref.invoke_by_id(str_id_update_visuals, {});
+		}
+		else
+		{
+			turfs_to_update_visuals_on.insert(&tile);
+		}
 	}
 	breakdown_cooldown = 0;
 }
-
-extern std::list<Tile*> active_turfs;
 
 void ExcitedGroup::dismantle(bool unexcite) {
 	int turf_list_size = turf_list.size();

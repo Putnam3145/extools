@@ -17,7 +17,9 @@ class GasMixture
         GasMixture(const GasMixture& other) { copy_from_mutable(other); }
         GasMixture& operator=(const GasMixture& other) { copy_from_mutable(other); return *this; }
         void mark_immutable();
+        void mark_tile();
         inline bool is_immutable() const {return immutable;}
+        inline bool is_tile() const {return tile;}
         mutable std::recursive_mutex mutex;
         float heat_capacity() const;
         float heat_capacity_archived() const;
@@ -62,6 +64,7 @@ class GasMixture
 		float min_heat_capacity = 0;
         bool immutable = false;
         bool dirty_react = true;
+        bool tile = false;
 	// you might thing, "damn, all the gases, wont that use up more memory"?
 	// well no. Let's look at the average gas mixture in BYOND land containing both oxygen and nitrogen:
 	// gases (28+8 bytes)

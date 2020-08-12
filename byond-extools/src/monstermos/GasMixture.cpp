@@ -17,6 +17,10 @@ GasMixture::GasMixture(float v)
 
 GasMixture::GasMixture() {}
 
+void GasMixture::mark_tile() {
+    tile = true;
+}
+
 void GasMixture::mark_immutable() {
     immutable = true;
 }
