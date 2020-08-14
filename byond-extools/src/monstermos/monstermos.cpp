@@ -748,11 +748,12 @@ void air_process_loop()
 	{
 		if(process_lock.try_lock())
 		{
-			auto max_to_consider = active_turfs.size() * 1.1;
+			auto max_to_consider = active_turfs.size();
 			auto sw = Stopwatch();
 			while(cur_thread_step == TICK_EQUALIZING && sw.peek() < 2000)
 			{
-				if(active_turfs_currentrun.empty() || done_equalizing_turfs.size() >= max_to_consider)
+				if(active_turfs_currentrun.empty() || 
+				done_equalizing_turfs.size() >= (max_to_consider * MONSTERMOS_TURF_LIMIT))
 				{
 					cur_thread_step = TICK_PROCESSING;
 					active_turfs_currentrun.clear();
@@ -782,7 +783,7 @@ void air_process_loop()
 			}
 			while(cur_thread_step == TICK_PROCESSING && sw.peek() < 2000)
 			{
-				if(active_turfs_currentrun.empty() || done_processing_turfs.size() >= max_to_consider)
+				if(active_turfs_currentrun.empty() || done_processing_turfs.size() >= (max_to_consider * 1.1))
 				{
 					cur_thread_step = TICK_EXCITED_GROUPS;
 					active_turfs_currentrun.clear();
@@ -856,7 +857,7 @@ trvh SSair_post_process_turf_equalize(unsigned int args_len, Value* args, Value 
 	float time_limit = args[1].valuef * 100000.0f;
 	int fire_count = SSair.get("times_fired");
 	std::scoped_lock lock(process_mutex);
-	while(done_equalizing_turfs.size())
+	while(!done_equalizing_turfs.empty())
 	{
 		auto tile = done_equalizing_turfs.front();
 		done_equalizing_turfs.pop_front();
@@ -920,7 +921,6 @@ trvh SSair_turfs_update_ssair_turfs(unsigned int args_len, Value* args, Value sr
 trvh SSair_update_gas_reactions(unsigned int args_len, Value* args, Value src) {
 	Container gas_reactions = SSair.get("gas_reactions");
 	cached_reactions.clear();
-	cached_reactions.push_back(std::make_shared<Fusion>());
 	for(int i = 0; i < gas_reactions.length(); i++)
 	{
 		cached_reactions.push_back(std::make_shared<ByondReaction>(gas_reactions.at(i)));
