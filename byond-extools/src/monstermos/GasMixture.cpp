@@ -65,7 +65,6 @@ void GasMixture::archive() {
 
 void GasMixture::merge(const GasMixture &giver) {
     if(immutable) return;
-    std::scoped_lock lock(mutex);
     if(std::abs(temperature - giver.temperature) > MINIMUM_TEMPERATURE_DELTA_TO_CONSIDER) {
         float self_heat_capacity = heat_capacity();
         float giver_heat_capacity = giver.heat_capacity();
@@ -94,7 +93,6 @@ GasMixture GasMixture::remove_ratio(float ratio) {
     GasMixture removed;
     removed.volume = volume;
     removed.temperature = temperature;
-    std::scoped_lock lock(mutex);
     for(int i = 0; i < TOTAL_NUM_GASES; i++) {
         if(moles[i] < GAS_MIN_MOLES) {
             removed.moles[i] = 0;
@@ -110,13 +108,11 @@ GasMixture GasMixture::remove_ratio(float ratio) {
 
 void GasMixture::copy_from_mutable(const GasMixture &sample) {
     if(immutable) return;
-    std::scoped_lock lock(mutex,sample.mutex);
     memcpy(moles, sample.moles, sizeof(moles));
     temperature = sample.temperature;
 }
 
 float GasMixture::share(GasMixture &sharer, int atmos_adjacent_turfs) {
-    std::scoped_lock lock(mutex,sharer.mutex);
     float temperature_delta = temperature_archived - sharer.temperature_archived;
     float abs_temperature_delta = std::abs(temperature_delta);
     float old_self_heat_capacity = 0;
@@ -201,7 +197,6 @@ float GasMixture::share(GasMixture &sharer, int atmos_adjacent_turfs) {
 void GasMixture::temperature_share(GasMixture &sharer, float conduction_coefficient) {
     float temperature_delta = temperature_archived - sharer.temperature_archived;
     if(std::abs(temperature_delta) > MINIMUM_TEMPERATURE_DELTA_TO_CONSIDER) {
-        std::scoped_lock lock(mutex,sharer.mutex);
         float self_heat_capacity = heat_capacity_archived();
         float sharer_heat_capacity = sharer.heat_capacity_archived();
 
@@ -244,7 +239,6 @@ int GasMixture::compare(GasMixture &sample) const {
 
 void GasMixture::clear() {
 	if (immutable) return;
-    std::scoped_lock lock(mutex);
 	for (int i = 0; i < TOTAL_NUM_GASES; i++) {
 		moles[i] = 0;
 	}
@@ -253,7 +247,6 @@ void GasMixture::clear() {
 
 void GasMixture::multiply(float multiplier) {
 	if (immutable) return;
-    std::scoped_lock lock(mutex);
     #pragma omp simd
 	for (int i = 0; i < TOTAL_NUM_GASES; i++) {
 		moles[i] *= multiplier;
