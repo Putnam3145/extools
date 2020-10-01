@@ -570,11 +570,11 @@ trvh SSair_remove_from_active(unsigned args_len,Value* args, Value src)
 
 trvh SSair_process_active_turfs(unsigned args_len,Value* args,Value src)
 {
-	if (args_len < 2) { return Value::Null(); }
+	if (args_len < 3) { return Value::Null(); }
 	auto checker = Stopwatch();
 	float time_limit = args[1] * 100000.0f;
 
-	int fire_count = SSair.get_by_id(str_id_times_fired);
+	int fire_count = args[2];
 	if (!args[0]) {
 		active_turfs_currentrun.clear();
 		std::reverse_copy(active_turfs.begin(),active_turfs.end(),std::back_inserter(active_turfs_currentrun));
@@ -593,11 +593,11 @@ trvh SSair_process_active_turfs(unsigned args_len,Value* args,Value src)
 
 trvh SSair_process_equalize_turfs(unsigned args_len,Value* args,Value src)
 {
-	if (args_len < 2) { return Value::Null(); }
+	if (args_len < 3) { return Value::Null(); }
 	auto checker = Stopwatch();
 	float time_limit = args[1] * 100000.0f;
 
-	int fire_count = SSair.get_by_id(str_id_times_fired);
+	int fire_count = args[2];
 	if (!args[0]) {
 		active_turfs_currentrun.clear();
 		std::reverse_copy(active_turfs.begin(),active_turfs.end(),std::back_inserter(active_turfs_currentrun));
@@ -856,7 +856,7 @@ const char* enable_monstermos()
 	Core::get_proc("/datum/controller/subsystem/air/proc/get_max_gas_mixes").hook(SSair_get_max_gas_mixes);
 	Core::get_proc("/datum/controller/subsystem/air/proc/extools_update_ssair").hook(SSair_update_ssair);
 	Core::get_proc("/datum/controller/subsystem/air/proc/extools_update_reactions").hook(SSair_update_gas_reactions);
-	Core::get_proc("/datum/controller/subsystem/air/proc/scan_for_active_turfs").hook(SSair_check_all_turfs);
+	Core::get_proc("/datum/controller/subsystem/air/proc/rescan_active_turfs").hook(SSair_check_all_turfs);
 	Core::get_proc("/proc/get_extools_benchmarks").hook(get_extools_benchmarks);
 	all_turfs.refresh();
 	return "ok";
