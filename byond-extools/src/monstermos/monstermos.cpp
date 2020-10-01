@@ -13,6 +13,8 @@
 
 #include <execution>
 
+#include <iterator>
+
 using namespace monstermos::constants;
 
 trvh fuck(unsigned int args_len, Value* args, Value src)
