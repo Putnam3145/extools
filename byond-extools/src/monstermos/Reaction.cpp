@@ -32,21 +32,14 @@ Reaction::Reaction(Value v)
 
 bool Reaction::check_conditions(const GasMixture& air) const
 {
-    if(air.get_temperature() < min_temp_req || air.thermal_energy() < min_ener_req)
-    {
-        return false;
-    }
-    else
-    {
-        for(auto& info : min_gas_reqs)
+    return (
+        air.get_temperature() >= min_temp_req && 
+        (min_ener_req < 0 || air.thermal_energy() >= min_ener_req) &&
+        std::all_of(min_gas_reqs.begin(),min_gas_reqs.end(),[&air](auto& info)
         {
-            if(air.get_moles(info.first) < info.second)
-            {
-                return false;
-            }
-        }
-    }
-    return true;
+            return air.get_moles(info.first) >= info.second;
+        })
+    );
 }
 
 int Reaction::react(GasMixture& air,Value src,Value holder) const
