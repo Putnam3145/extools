@@ -577,14 +577,7 @@ trvh SSair_process_active_turfs(unsigned args_len,Value* args,Value src)
 	int fire_count = SSair.get_by_id(str_id_times_fired);
 	if (!args[0]) {
 		active_turfs_currentrun.clear();
-		if(active_turfs.size() > 2000)
-		{
-			std::reverse_copy(std::execution::par,active_turfs.begin(),active_turfs.end(),std::back_inserter(active_turfs_currentrun));
-		}
-		else
-		{
-			std::reverse_copy(std::execution::seq,active_turfs.begin(),active_turfs.end(),std::back_inserter(active_turfs_currentrun));
-		}
+		std::reverse_copy(active_turfs.begin(),active_turfs.end(),std::back_inserter(active_turfs_currentrun));
 	}
 	while(!active_turfs_currentrun.empty())
 	{
@@ -607,14 +600,7 @@ trvh SSair_process_equalize_turfs(unsigned args_len,Value* args,Value src)
 	int fire_count = SSair.get_by_id(str_id_times_fired);
 	if (!args[0]) {
 		active_turfs_currentrun.clear();
-		if(active_turfs.size() > 2000)
-		{
-			std::reverse_copy(std::execution::par,active_turfs.begin(),active_turfs.end(),std::back_inserter(active_turfs_currentrun));
-		}
-		else
-		{
-			std::reverse_copy(std::execution::seq,active_turfs.begin(),active_turfs.end(),std::back_inserter(active_turfs_currentrun));
-		}
+		std::reverse_copy(active_turfs.begin(),active_turfs.end(),std::back_inserter(active_turfs_currentrun));
 	}
 	while(!active_turfs_currentrun.empty())
 	{
