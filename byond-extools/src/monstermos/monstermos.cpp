@@ -39,8 +39,6 @@ std::vector < std::vector<Value> > gas_overlays;
 
 std::vector<Tile*> active_turfs;
 
-std::vector<Tile*> active_turfs_currentrun;
-
 void add_to_active(Tile* tile)
 {
 	auto pos = std::lower_bound(active_turfs.begin(),active_turfs.end(),tile);
@@ -572,51 +570,34 @@ trvh SSair_process_active_turfs(unsigned args_len,Value* args,Value src)
 {
 	if (args_len < 3) { return Value::Null(); }
 	auto checker = Stopwatch();
-	float time_limit = args[1] * 100000.0f;
+	float time_limit = args[2] * 100000.0f;
 
-	int fire_count = args[2];
-	if (!args[0]) {
-		active_turfs_currentrun.clear();
-		std::reverse_copy(active_turfs.begin(),active_turfs.end(),std::back_inserter(active_turfs_currentrun));
-	}
-	while(!active_turfs_currentrun.empty())
+	int fire_count = args[1];
+	std::for_each(active_turfs.begin(),active_turfs.end(),[fire_count](Tile* tile)
 	{
-		auto tile = active_turfs_currentrun.back();
-		active_turfs_currentrun.pop_back();
 		tile->process_cell(fire_count);
-		if (checker.peek() > time_limit) {
-			return Value::True();
-		}
-	}
-	return Value::False();
+	});
+	return Value(checker.peek() > time_limit);
 }
 
 trvh SSair_process_equalize_turfs(unsigned args_len,Value* args,Value src)
 {
 	if (args_len < 3) { return Value::Null(); }
 	auto checker = Stopwatch();
-	float time_limit = args[1] * 100000.0f;
+	float time_limit = args[2] * 100000.0f;
 
-	int fire_count = args[2];
-	if (!args[0]) {
-		active_turfs_currentrun.clear();
-		std::reverse_copy(active_turfs.begin(),active_turfs.end(),std::back_inserter(active_turfs_currentrun));
-	}
-	while(!active_turfs_currentrun.empty())
+	int fire_count = args[1];
+	std::for_each(active_turfs.begin(),active_turfs.end(),[fire_count](Tile* tile)
 	{
-		auto tile = active_turfs_currentrun.back();
-		active_turfs_currentrun.pop_back();
 		tile->equalize_pressure_in_zone(fire_count);
-		if (checker.peek() > time_limit) {
-			return Value::True();
-		}
-	}
-	return Value::False();
+	});
+	return Value(checker.peek() > time_limit);
 }
 
 trvh refresh_atmos_grid(unsigned int args_len, Value* args, Value src)
 {
 	all_turfs.refresh();
+	clear_active_turfs();
 	return Value::Null();
 }
 
@@ -704,6 +685,7 @@ trvh SSair_check_all_turfs(unsigned int args_len,Value* args,Value src)
 {
 	if (args_len < 1 || args[0]) { return Value::True(); }
 	std::atomic_size_t cur_idx = 0;
+	active_turfs.resize(active_turfs.capacity());
 	std::for_each(std::execution::par_unseq,
 		all_turfs.begin(),
 		all_turfs.end(),
@@ -713,6 +695,7 @@ trvh SSair_check_all_turfs(unsigned int args_len,Value* args,Value src)
 				active_turfs[cur_idx++] = &tile;
 				return;
 			}
+			if(tile.air == nullptr) return;
 			for(int i = 0;i<6;i++)
 			{
 				if (tile.adjacent_bits & (1 << i) && tile.adjacent[i]->air != nullptr && tile.air->compare(*(tile.adjacent[i]->air)) != -2)
