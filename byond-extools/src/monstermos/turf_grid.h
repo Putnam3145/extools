@@ -96,3 +96,5 @@ private:
 GasMixture &get_gas_mixture(Value src);
 
 size_t get_gas_mixture_index(Value val);
+
+trvh gasmixture_react(unsigned int args_len, Value* args, Value src);
