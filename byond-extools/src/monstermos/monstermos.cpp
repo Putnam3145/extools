@@ -685,35 +685,32 @@ trvh SSair_check_all_turfs(unsigned int args_len,Value* args,Value src)
 {
 	if (args_len < 1 || args[0]) { return Value::True(); }
 	std::atomic_size_t cur_idx = 0;
-	active_turfs.resize(active_turfs.capacity());
-	std::for_each(std::execution::par_unseq,
-		all_turfs.begin(),
-		all_turfs.end(),
-		[&cur_idx](Tile& tile) {
-			if(tile.excited)
-			{
-				active_turfs[cur_idx++] = &tile;
-				return;
-			}
-			if(tile.air == nullptr) return;
-			if(tile.planet_atmos_info && tile.air->compare(tile.planet_atmos_info->last_mix))
-			{
-				active_turfs[cur_idx++] = &tile;
-				return;
-			}
-			for(int i = 0;i<6;i++)
-			{
-				if (tile.adjacent_bits & (1 << i) && tile.adjacent[i]->air != nullptr && tile.air->compare(*(tile.adjacent[i]->air)) != -2)
-				{
-					active_turfs[cur_idx++] = &tile;
-					tile.excited = true;
-					return;
-				}
-			}
-			tile.excited = false;
+	active_turfs.clear();
+	for(auto& tile : all_turfs)
+	{
+		if(tile.excited)
+		{
+			active_turfs.push_back(&tile);
+			continue;
 		}
-	);
-	active_turfs.resize(cur_idx+1);
+		if(tile.air == nullptr) continue;
+		if(tile.planet_atmos_info && tile.air->compare(tile.planet_atmos_info->last_mix))
+		{
+			active_turfs.push_back(&tile);
+			tile.excited = true;
+			continue;
+		}
+		for(int i = 0;i<6;i++)
+		{
+			if (tile.adjacent_bits & (1 << i) && tile.adjacent[i]->air != nullptr && tile.air->compare(*(tile.adjacent[i]->air)) != -2)
+			{
+				active_turfs.push_back(&tile);
+				tile.excited = true;
+				continue;
+			}
+		}
+		tile.excited = false;
+	}
 	if(active_turfs.size() > 2048)
 	{
 		std::sort(std::execution::par_unseq,active_turfs.begin(),active_turfs.end());
