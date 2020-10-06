@@ -42,9 +42,9 @@ std::vector<Tile*> active_turfs;
 void add_to_active(Tile* tile)
 {
 	auto pos = std::lower_bound(active_turfs.begin(),active_turfs.end(),tile);
-	active_turfs.insert(pos,tile);
+	if(pos == active_turfs.end() || *pos != tile)
+		active_turfs.insert(pos,tile);
 }
-
 void remove_from_active(Tile* tile)
 {
 	auto iters = std::equal_range(active_turfs.begin(),active_turfs.end(),tile);
