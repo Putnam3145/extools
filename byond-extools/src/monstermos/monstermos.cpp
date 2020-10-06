@@ -723,6 +723,8 @@ trvh SSair_check_all_turfs(unsigned int args_len,Value* args,Value src)
 	{
 		active_turfs.erase(active_turfs.begin(),std::upper_bound(active_turfs.begin(),active_turfs.end(),(Tile*)nullptr));
 	}
+	auto newEnd = std::unique(active_turfs.begin(),active_turfs.end());
+	active_turfs.erase(newEnd,active_turfs.end());
 	return Value::False();
 }
 
