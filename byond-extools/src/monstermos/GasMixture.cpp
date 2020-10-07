@@ -8,6 +8,8 @@
 
 #include <numeric>
 
+#include <iterator>
+
 #include <execution>
 
 using namespace monstermos::constants;
