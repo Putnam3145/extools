@@ -2,8 +2,6 @@
 
 #include "atmos_defines.h"
 
-#include "../third_party/robin_hood.h"
-
 #include <vector>
 
 #define GAS_MIN_MOLES 0.00000005
@@ -11,13 +9,10 @@
 
 extern std::vector<float> gas_specific_heat;
 
-using gas_entry = std::pair<int,float>;
-
 class GasMixture
 {
     public:
         GasMixture(float volume);
-        void garbage_collect();
         void mark_immutable();
         inline bool is_immutable() const {return immutable;}
 
@@ -41,7 +36,7 @@ class GasMixture
 
         inline float get_temperature() const { return temperature; }
         inline void set_temperature(float new_temp) { if(!immutable) temperature = new_temp; }
-        inline float get_moles(int gas_type) const {return moles.contains(gas_type) ? moles.at(gas_type) : 0.0;}
+        inline float get_moles(int gas_type) const {return moles[gas_type] >= GAS_MIN_MOLES ? moles[gas_type] : 0;}
         inline void set_moles(int gas_type, float new_moles) { if(!immutable) moles[gas_type] = new_moles; }
 		inline float get_volume() const { return volume; }
 		inline void set_volume(float new_vol) { volume = new_vol; }
@@ -49,8 +44,8 @@ class GasMixture
 
     private:
         GasMixture();
-        robin_hood::unordered_map<int,float> moles;
-        robin_hood::unordered_map<int,float> moles_archived;
+        std::vector<float> moles;
+        std::vector<float> moles_archived;
         float temperature = 0;
         float temperature_archived;
         float volume;

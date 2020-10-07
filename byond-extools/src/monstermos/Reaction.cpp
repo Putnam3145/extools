@@ -18,28 +18,34 @@ Reaction::Reaction(Value v)
             min_gas_reqs[i] = gasReq;
         }
     }
-    major_gas = v.get("major_gas");
+    major_gas = gas_ids[v.get("major_gas").value];
+    name = v.get("name");
     priority = v.get("priority");
     auto proc = Core::try_get_proc(Core::stringify(v.get("type")) + "/react");
     if(!proc)
     {
         Core::alert_dd("Could not find proc for reaction! " + Core::stringify(v.get("type")) + "/react");
     }
-    else
-    {
-        Core::alert_dd("Found proc for reaction: " + Core::stringify(v.get("type")) + "/react");
-    }
     proc_id = proc->id;
 }
 
 bool Reaction::check_conditions(const GasMixture& air) const
 {
-    return (air.get_moles(major_gas) > 0.0 &&
-            air.get_temperature() >= min_temp_req && air.get_temperature() <= max_temp_req && 
-            min_ener_req > 0.0 && air.thermal_energy() >= min_ener_req &&
-            std::all_of(min_gas_reqs.cbegin(),min_gas_reqs.cend(),[&](auto& info) {
+    if(!air.get_moles(major_gas)) [[likely]] {
+        return false;
+    }
+    if(air.get_temperature() < min_temp_req || air.get_temperature() > max_temp_req) [[likely]]
+    {
+        return false;
+    }
+    if(min_ener_req > 0.0) [[unlikely]] {
+        if(air.thermal_energy() < min_ener_req) {
+            return false;
+        }
+    }
+    return std::all_of(min_gas_reqs.cbegin(),min_gas_reqs.cend(),[&](auto& info) {
                 return air.get_moles(info.first) >= info.second;
-            }));
+            });
 }
 
 int Reaction::react(GasMixture& air,Value src,Value holder) const

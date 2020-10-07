@@ -654,12 +654,6 @@ trvh SSair_update_ssair(unsigned int args_len, Value* args, Value src) {
 	return Value::Null();
 }
 
-long long react_check_benchmark = 0;
-
-long long react_total_benchmark = 0;
-
-long reacts_done = 0;
-
 trvh gasmixture_react(unsigned int args_len, Value* args, Value src)
 {
 	GasMixture &src_gas = get_gas_mixture(src);
@@ -673,22 +667,13 @@ trvh gasmixture_react(unsigned int args_len, Value* args, Value src)
 	{
 		holder = args[0];
 	}
-	std::vector<bool> can_react(cached_reactions.size());
-	std::transform(std::execution::seq, //par introduces 2000 ns overhead, so, if this ever gets to be more than 2000 ns...
-		cached_reactions.begin(),cached_reactions.end(),
-		can_react.begin(),
-		[&src_gas](auto& reaction) {
-			return reaction.check_conditions(src_gas);
-		}
-	);
-	for(int i=0;i<cached_reactions.size();i++)
+	for(auto& reaction : cached_reactions)
 	{
-		if(can_react[i])
+		if(reaction.check_conditions(src_gas)) [[unlikely]]
 		{
-			auto &reaction = cached_reactions[i];
 			IncRefCount(src.type,src.value); // have to do this or the gas mixture will be GC'd at the end of the function
 			IncRefCount(holder.type,holder.value); // i'm assuming this would also end up GC'd--even worse
-			ret |= cached_reactions[i].react(src_gas,src,holder);
+			ret |= reaction.react(src_gas,src,holder);
 		}
 		if(ret & STOP_REACTIONS) return Value((float)ret);
 	}
