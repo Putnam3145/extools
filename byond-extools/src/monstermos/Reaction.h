@@ -20,11 +20,9 @@ class Reaction
         bool check_conditions(const GasMixture& mix) const;
         int react(GasMixture& mix,Value src,Value holder) const;
         inline float get_priority() { return priority; }
-        std::string get_name() { return name; };
         Reaction(Value v);
     private:
         Reaction();
-        std::string name;
         unsigned int major_gas;
         float priority;
         float min_temp_req = 0.0;

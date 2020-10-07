@@ -19,7 +19,6 @@ Reaction::Reaction(Value v)
         }
     }
     major_gas = gas_ids[v.get("major_gas").value];
-    name = v.get("name");
     priority = v.get("priority");
     auto proc = Core::try_get_proc(Core::stringify(v.get("type")) + "/react");
     if(!proc)
