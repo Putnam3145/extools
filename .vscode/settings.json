@@ -80,6 +80,10 @@
         "future": "cpp",
         "queue": "cpp",
         "set": "cpp",
-        "variant": "cpp"
+        "variant": "cpp",
+        "complex": "cpp",
+        "locale": "cpp",
+        "xlocbuf": "cpp",
+        "xlocmes": "cpp"
     }
 }

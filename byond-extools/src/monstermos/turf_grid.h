@@ -3,6 +3,7 @@
 #include "GasMixture.h"
 #include "../core/core.h"
 #include <memory>
+#include "../third_party/Eigen/Sparse"
 
 class TurfGrid;
 struct PlanetAtmosInfo;
@@ -16,27 +17,18 @@ struct Tile
     Tile();
 	void update_air_ref();
 	void update_adjacent(TurfGrid &grid);
-	void process_cell(int fire_count);
 	void archive(int fire_count);
 	void last_share_check();
 	void update_planet_atmos();
-	void adjust_eq_movement(int dir, float amount);
-	void finalize_eq();
-	void finalize_eq_neighbors(float *transfer_dirs);
-	void equalize_pressure_in_zone(int cyclenum);
-	void explosively_depressurize(int cyclenum);
 	// adjacent tiles in the order NORTH,SOUTH,EAST,WEST,UP,DOWN.
 	// 
 	Tile *adjacent[6];
 	unsigned char adjacent_bits = 0;
-	unsigned char atmos_cooldown = 0;
-	bool excited = false;
-	GasMixture* air; // raw pointer cause it's in a vector anyway
 	size_t air_index;
 	Value turf_ref; // not managed because turf refcounts are very unimportant and don't matter
 	std::unique_ptr<PlanetAtmosInfo> planet_atmos_info;
 	std::shared_ptr<ExcitedGroup> excited_group; // shared_ptr for an actuall good reason this time.
-	std::unique_ptr<MonstermosInfo> monstermos_info;
+	bool already_processed = false;
 };
 
 struct PlanetAtmosInfo
@@ -45,42 +37,39 @@ struct PlanetAtmosInfo
 	GasMixture last_mix = GasMixture(monstermos::constants::CELL_VOLUME);
 }; // not part of main Tile struct because we don't need it for the whole map
 
-struct MonstermosInfo
-{
-	int last_cycle = 0;
-	uint64_t last_queue_cycle = 0;
-	uint64_t last_slow_queue_cycle = 0;
-	float mole_delta = 0;
-	float transfer_dirs[7] = { 0,0,0,0,0,0,0 };
-	float curr_transfer_amount = 0;
-	float distance_score = 0;
-	uint8_t curr_transfer_dir = 6;
-	bool fast_done = false;
-	bool is_planet = false;
-};
+using GasMatrix = Eigen::SparseMatrix<float>;
 
-struct ExcitedGroup : public std::enable_shared_from_this<ExcitedGroup>
-{
-	std::vector<Tile*> turf_list;
-	int breakdown_cooldown = 0;
-	int dismantle_cooldown = 0;
-	void initialize();
-	~ExcitedGroup();
-	void reset_cooldowns();
-	void merge_groups(std::shared_ptr<ExcitedGroup>& other);
-	void add_turf(Tile &tile);
-	void self_breakdown(bool space_is_all_consuming = false);
-	void dismantle(bool unexcite = true);
+using VelocityMatrix = Eigen::SparseMatrix<std::complex<float>>;
+
+using ProcessSpecifier = Eigen::Array<char,Eigen::Dynamic,Eigen::Dynamic>;
+
+const int ATMOS_WIDTH = 255;
+
+enum ProcessingLevel {
+	PROCESSING_LEVEL_NONE,
+	PROCESSING_LEVEL_SPACE,
+	PROCESSING_LEVEL_STATION,
+	PROCESSING_LEVEL_PLANET
 };
 
 class TurfGrid {
 public:
-	Tile *get(int x, int y, int z) const;
-	Tile *get(int id) const;
+	Tile &get(int x, int y, int z);
+	Tile &get(int id);
+	GasMixture gas_from_turf(int x,int y, int z,bool cache=true);
+	GasMixture gas_from_turf(int id,bool cache=true);
 	void refresh();
+	void process();
 
 private:
-	std::unique_ptr<Tile[]> tiles;
+	std::vector<ProcessSpecifier> processing_turfs;
+	std::unordered_map<int,std::vector<GasMatrix>> gasDensities;
+	std::vector<GasMatrix> gasEnergy;
+	std::vector<VelocityMatrix> gasVelocity;
+	std::vector<GasMatrix> energySources;
+	std::vector<VelocityMatrix> velocitySources;
+	std::unordered_map<int,std::vector<GasMatrix>> sources;
+	std::unordered_map<int,GasMixture> gasesByTurf;
 	short maxx = 0;
 	short maxy = 0;
 	short maxz = 0;

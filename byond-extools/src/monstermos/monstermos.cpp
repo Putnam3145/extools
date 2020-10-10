@@ -307,96 +307,17 @@ trvh gasmixture_multiply(unsigned int args_len, Value* args, Value src)
 	return Value::Null();
 }
 
-trvh turf_update_adjacent(unsigned int args_len, Value* args, Value src)
-{
-	if (src.type != TURF) { return Value::Null(); }
-	Tile *tile = all_turfs.get(src.value);
-	if (tile != nullptr) {
-		tile->update_adjacent(all_turfs);
-	}
-	return Value::Null();
-}
-
-trvh turf_update_air_ref(unsigned int args_len, Value* args, Value src)
-{
-	if (src.type != TURF) { return Value::Null(); }
-	Tile *tile = all_turfs.get(src.value);
-	if (tile != nullptr) {
-		tile->update_air_ref();
-	}
-	return Value::Null();
-}
-
-trvh turf_eg_reset_cooldowns(unsigned int args_len, Value* args, Value src)
-{
-	if (src.type != TURF) { return Value::Null(); }
-	Tile *tile = all_turfs.get(src.value);
-	if (tile != nullptr) {
-		if (tile->excited_group) {
-			tile->excited_group->reset_cooldowns();
-		}
-	}
-	return Value::Null();
-}
-
-trvh turf_eg_garbage_collect(unsigned int args_len, Value* args, Value src)
-{
-	if (src.type != TURF) { return Value::Null(); }
-	Tile *tile = all_turfs.get(src.value);
-	if (tile != nullptr) {
-		if (tile->excited_group) {
-			// store to local variable to prevent it from being destructed while we're still using it because that causes segfaults.
-			std::shared_ptr<ExcitedGroup> eg = tile->excited_group;
-			eg->dismantle(false);
-		}
-	}
-	return Value::Null();
-}
-
-trvh turf_get_excited(unsigned int args_len, Value* args, Value src)
-{
-	if (src.type != TURF) { return Value::Null(); }
-	Tile *tile = all_turfs.get(src.value);
-	if (tile != nullptr) {
-		return Value(tile->excited ? 1.0 : 0.0);
-	}
-	return Value::Null();
-}
-trvh turf_set_excited(unsigned int args_len, Value* args, Value src)
-{
-	if (src.type != TURF) { return Value::Null(); }
-	Tile *tile = all_turfs.get(src.value);
-	if (tile != nullptr) {
-		tile->excited = args_len > 0 ? (bool)args[0] : false;
-	}
-	return Value::Null();
-}
-
-trvh turf_process_cell(unsigned int args_len, Value* args, Value src)
-{
-	if (src.type != TURF || args_len < 1) { return Value::Null(); }
-	Tile *tile = all_turfs.get(src.value);
-	if (tile != nullptr) {
-		tile->process_cell(args[0]);
-	}
-	return Value::Null();
-}
-
-trvh turf_eq(unsigned int args_len, Value* args, Value src) {
-	if (src.type != TURF || args_len < 1) { return Value::Null(); }
-	Tile *tile = all_turfs.get(src.value);
-	if (tile != nullptr) {
-		tile->equalize_pressure_in_zone(args[0]);
-	}
-	return Value::Null();
+trvh turf_get_extools_air(unsigned int args_len, Value* args, Value src) {
+	if(args_len < 1)
+		return Value::Null();
+	get_gas_mixture(args[0]).copy_from_mutable(all_turfs.gas_from_turf(src.value));
+	return Value::True();
 }
 
 unsigned int str_id_atmos_overlay_types;
 trvh turf_update_visuals(unsigned int args_len, Value* args, Value src) {
 	if (src.type != TURF) { return Value::Null(); }
-	Tile* tile = all_turfs.get(src.value);
-	if (!tile->air) return Value::Null();
-	GasMixture& gm = *tile->air;
+	GasMixture& gm = all_turfs.gas_from_turf(src.value,false);
 	Value old_overlay_types_val = src.get_by_id(str_id_atmos_overlay_types);
 	std::vector<Value> overlay_types;
 
@@ -469,79 +390,7 @@ class Stopwatch {
 		}
 };
 
-std::vector<std::weak_ptr<ExcitedGroup>> excited_groups_currentrun;
-trvh SSair_process_excited_groups(unsigned int args_len, Value* args, Value src) {
-	auto checker = Stopwatch();
-	float time_limit = args[1] * 100000.0f;
-
-	if (args_len < 2) { return Value::Null(); }
-	if (!args[0]) {
-		excited_groups_currentrun = excited_groups; // this copies it.... right?
-	}
-	while (excited_groups_currentrun.size()) {
-		std::shared_ptr<ExcitedGroup> eg = excited_groups_currentrun.back().lock();
-		excited_groups_currentrun.pop_back();
-		if (!eg) continue;
-		eg->breakdown_cooldown++;
-		eg->dismantle_cooldown++;
-		if (eg->breakdown_cooldown >= EXCITED_GROUP_BREAKDOWN_CYCLES)
-			eg->self_breakdown();
-		if (eg->dismantle_cooldown >= EXCITED_GROUP_DISMANTLE_CYCLES)
-			eg->dismantle(true);
-		if (checker.peek() > time_limit) {
-			return Value::True();
-		}
-	}
-	return Value::False();
-}
-
-trvh SSair_get_amt_excited_groups(unsigned int args_len, Value* args, Value src) {
-	return Value(excited_groups.size());
-}
-
 #include <unordered_set>
-
-std::unordered_set<Tile*> active_turfs;
-
-std::unordered_set<Tile*>::iterator active_turfs_currentrun_pos = active_turfs.begin();
-
-void add_to_active(Tile* tile)
-{
-	auto prev_bucket_count = active_turfs.bucket_count();
-	active_turfs.insert(tile);
-	if(active_turfs.bucket_count() > prev_bucket_count || active_turfs.size() == 1) //the iterators are invalidated--start over
-	{
-		active_turfs_currentrun_pos = active_turfs.begin();
-	}
-}
-
-void remove_from_active(Tile* tile)
-{
-	if(active_turfs.empty()) return;
-	if(*active_turfs_currentrun_pos == tile) active_turfs_currentrun_pos++; // this iterator's gonna be invalidated--go to the next one
-	active_turfs.erase(tile);
-}
-
-trvh SSair_clear_active_turfs(unsigned int args_len, Value* args, Value src)
-{
-	active_turfs.clear();
-	active_turfs_currentrun_pos = active_turfs.begin();
-	return Value::Null();
-}
-
-trvh SSair_get_active_turfs(unsigned int args_len, Value* args, Value src)
-{
-	List l(CreateList(0));
-	for(auto t : active_turfs)
-	{
-		l.append(t->turf_ref);
-	}
-	return l;
-}
-
-trvh SSair_get_amt_active_turfs(unsigned int args_len, Value* args, Value src) {
-	return Value(active_turfs.size());
-}
 
 trvh SSair_get_amt_gas_mixes(unsigned int args_len, Value* args, Value src) {
 	return Value(gas_mixtures.size() - next_gas_ids.size());
@@ -551,64 +400,8 @@ trvh SSair_get_max_gas_mixes(unsigned int args_len, Value* args, Value src) {
 	return Value(gas_mixtures.size());
 }
 
-trvh SSair_add_to_active(unsigned args_len,Value* args, Value src)
-{
-	if(args_len < 1 || args[0].type != TURF) return Value::Null();
-	auto tile = all_turfs.get(args[0].value);
-	if(tile != nullptr) add_to_active(tile);
+trvh SSair_calculate_pressure_diffs(unsigned int args_len,Value* args,Value src) {
 	return Value::Null();
-}
-
-trvh SSair_remove_from_active(unsigned args_len,Value* args, Value src)
-{
-	if(args_len < 1 || args[0].type != TURF) return Value::Null();
-	auto tile = all_turfs.get(args[0].value);
-	if(tile != nullptr) remove_from_active(tile);
-	return Value::Null();
-}
-
-trvh SSair_process_active_turfs(unsigned args_len,Value* args,Value src)
-{
-	if (args_len < 2) { return Value::Null(); }
-	auto checker = Stopwatch();
-	float time_limit = args[1] * 100000.0f;
-
-	int fire_count = SSair.get_by_id(str_id_times_fired);
-	if (!args[0]) {
-		active_turfs_currentrun_pos = active_turfs.begin();
-	}
-	while(active_turfs_currentrun_pos != active_turfs.end())
-	{
-		auto tile = *active_turfs_currentrun_pos;
-		tile->process_cell(fire_count);
-		active_turfs_currentrun_pos++;
-		if (checker.peek() > time_limit) {
-			return Value::True();
-		}
-	}
-	return Value::False();
-}
-
-trvh SSair_process_equalize_turfs(unsigned args_len,Value* args,Value src)
-{
-	if (args_len < 2) { return Value::Null(); }
-	auto checker = Stopwatch();
-	float time_limit = args[1] * 100000.0f;
-
-	int fire_count = SSair.get_by_id(str_id_times_fired);
-	if (!args[0]) {
-		active_turfs_currentrun_pos = active_turfs.begin();
-	}
-	while(active_turfs_currentrun_pos != active_turfs.end())
-	{
-		auto tile = *active_turfs_currentrun_pos;
-		tile->equalize_pressure_in_zone(fire_count);
-		active_turfs_currentrun_pos++;
-		if (checker.peek() > time_limit) {
-			return Value::True();
-		}
-	}
-	return Value::False();
 }
 
 trvh refresh_atmos_grid(unsigned int args_len, Value* args, Value src)
@@ -771,25 +564,9 @@ const char* enable_monstermos()
 	Core::get_proc("/datum/gas_mixture/proc/multiply").hook(gasmixture_multiply);
 	Core::get_proc("/datum/gas_mixture/proc/get_last_share").hook(gasmixture_get_last_share);
 	Core::get_proc("/datum/gas_mixture/proc/react").hook(gasmixture_react);
-	Core::get_proc("/turf/proc/__update_extools_adjacent_turfs").hook(turf_update_adjacent);
-	Core::get_proc("/turf/proc/update_air_ref").hook(turf_update_air_ref);
-	Core::get_proc("/turf/open/proc/eg_reset_cooldowns").hook(turf_eg_reset_cooldowns);
-	Core::get_proc("/turf/open/proc/eg_garbage_collect").hook(turf_eg_garbage_collect);
-	Core::get_proc("/turf/open/proc/get_excited").hook(turf_get_excited);
-	Core::get_proc("/turf/open/proc/set_excited").hook(turf_set_excited);
-	Core::get_proc("/turf/open/proc/process_cell").hook(turf_process_cell);
-	Core::get_proc("/turf/open/proc/equalize_pressure_in_zone").hook(turf_eq);
+	Core::get_proc("/turf/open/proc/get_extools_air()").hook(turf_get_extools_air);
 	Core::get_proc("/turf/open/proc/update_visuals").hook(turf_update_visuals);
 	Core::get_proc("/world/proc/refresh_atmos_grid").hook(refresh_atmos_grid);
-	Core::get_proc("/datum/controller/subsystem/air/proc/process_active_turfs_extools").hook(SSair_process_active_turfs);
-	Core::get_proc("/datum/controller/subsystem/air/proc/process_turf_equalize_extools").hook(SSair_process_equalize_turfs);
-	Core::get_proc("/datum/controller/subsystem/air/proc/process_excited_groups_extools").hook(SSair_process_excited_groups);
-	Core::get_proc("/datum/controller/subsystem/air/proc/get_active_turfs").hook(SSair_get_active_turfs);
-	Core::get_proc("/datum/controller/subsystem/air/proc/clear_active_turfs").hook(SSair_clear_active_turfs);
-	Core::get_proc("/datum/controller/subsystem/air/proc/add_to_active_extools").hook(SSair_add_to_active);
-	Core::get_proc("/datum/controller/subsystem/air/proc/remove_from_active_extools").hook(SSair_remove_from_active);
-	Core::get_proc("/datum/controller/subsystem/air/proc/get_amt_excited_groups").hook(SSair_get_amt_excited_groups);
-	Core::get_proc("/datum/controller/subsystem/air/proc/get_amt_active_turfs").hook(SSair_get_amt_active_turfs);
 	Core::get_proc("/datum/controller/subsystem/air/proc/get_amt_gas_mixes").hook(SSair_get_amt_gas_mixes);
 	Core::get_proc("/datum/controller/subsystem/air/proc/get_max_gas_mixes").hook(SSair_get_max_gas_mixes);
 	Core::get_proc("/datum/controller/subsystem/air/proc/extools_update_ssair").hook(SSair_update_ssair);
