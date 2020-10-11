@@ -84,6 +84,7 @@
         "complex": "cpp",
         "locale": "cpp",
         "xlocbuf": "cpp",
-        "xlocmes": "cpp"
+        "xlocmes": "cpp",
+        "compare": "cpp"
     }
 }

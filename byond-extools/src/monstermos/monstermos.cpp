@@ -6,7 +6,9 @@
 #include "turf_grid.h"
 #include "../dmdism/opcodes.h"
 
-#include <cmath>
+#define _USE_MATH_DEFINES
+
+#include <math.h>
 #include <chrono>
 
 #include <algorithm>
@@ -314,6 +316,46 @@ trvh turf_get_extools_air(unsigned int args_len, Value* args, Value src) {
 	return Value::True();
 }
 
+trvh turf_update_turf(unsigned int args_len, Value* args,Value src) {
+	bool can_pass = false;
+	if(args_len > 0)
+		can_pass = args[0];
+	all_turfs.set_turf_proc_level(src.value,can_pass ? TURF_PROCESSING_LEVEL_SPACE : TURF_PROCESSING_LEVEL_STATION);
+	return Value::True();
+}
+
+trvh turf_set_turf_proc_level(unsigned int args_len, Value* args,Value src) {
+	if(args_len < 1)
+		return Value::Null();
+	all_turfs.set_turf_proc_level(src.value,args[0]);
+	return Value::True();
+}
+
+trvh turf_get_velocity(unsigned int args_len, Value* args,Value src) {
+	auto complex_vel = all_turfs.get_velocity(src.value);
+	auto arg = std::arg(complex_vel);
+	if(std::abs(arg) < M_PI_4)
+	{
+		arg = 4;
+	}
+	else if(std::abs(arg) > M_PI_4*3)
+	{
+		arg = 8;
+	}
+	else if(arg < 0)
+	{
+		arg = 2;
+	}
+	else
+	{
+		arg = 1;
+	}
+	List l(CreateList(0));
+	l.append(std::abs(complex_vel)*ONE_ATMOSPHERE);
+	l.append(std::arg(complex_vel));
+	return l;
+}
+
 unsigned int str_id_atmos_overlay_types;
 trvh turf_update_visuals(unsigned int args_len, Value* args, Value src) {
 	if (src.type != TURF) { return Value::Null(); }
@@ -448,6 +490,25 @@ trvh SSair_update_ssair(unsigned int args_len, Value* args, Value src) {
 	return Value::Null();
 }
 
+trvh SSair_add_to_sources(unsigned int args_len, Value* args, Value src) {
+	if(args_len < 2)
+		return Value::Null();
+	float force = 0.0;
+	float dir = 0.0;
+	if(args_len >= 3)
+	{
+		force = args[2];
+	}
+	if(args_len >= 4)
+	{
+		dir = args[3];
+	}
+	auto gas_copy = GasMixture(2500);
+	gas_copy.copy_from_mutable(get_gas_mixture(args[1]));
+	all_turfs.add_to_source(args[0].value,gas_copy,force,dir);
+	return Value::True();
+}
+
 trvh gasmixture_react(unsigned int args_len, Value* args, Value src)
 {
 	GasMixture &src_gas = get_gas_mixture(src);
@@ -564,13 +625,17 @@ const char* enable_monstermos()
 	Core::get_proc("/datum/gas_mixture/proc/multiply").hook(gasmixture_multiply);
 	Core::get_proc("/datum/gas_mixture/proc/get_last_share").hook(gasmixture_get_last_share);
 	Core::get_proc("/datum/gas_mixture/proc/react").hook(gasmixture_react);
-	Core::get_proc("/turf/open/proc/get_extools_air()").hook(turf_get_extools_air);
+	Core::get_proc("/turf/open/proc/get_extools_air").hook(turf_get_extools_air);
+	Core::get_proc("/turf/open/proc/extools_update_turf").hook(turf_update_turf);
+	Core::get_proc("/turf/open/proc/set_processing_level").hook(turf_set_turf_proc_level);
+	Core::get_proc("/turf/open/proc/get_velocity").hook(turf_get_velocity);
 	Core::get_proc("/turf/open/proc/update_visuals").hook(turf_update_visuals);
 	Core::get_proc("/world/proc/refresh_atmos_grid").hook(refresh_atmos_grid);
 	Core::get_proc("/datum/controller/subsystem/air/proc/get_amt_gas_mixes").hook(SSair_get_amt_gas_mixes);
 	Core::get_proc("/datum/controller/subsystem/air/proc/get_max_gas_mixes").hook(SSair_get_max_gas_mixes);
 	Core::get_proc("/datum/controller/subsystem/air/proc/extools_update_ssair").hook(SSair_update_ssair);
 	Core::get_proc("/datum/controller/subsystem/air/proc/extools_update_reactions").hook(SSair_update_gas_reactions);
+	Core::get_proc("/datum/controller/subsystem/air/proc/add_to_sources").hook(SSair_add_to_sources);
 	Core::get_proc("/proc/get_extools_benchmarks").hook(get_extools_benchmarks);
 	all_turfs.refresh();
 	return "ok";

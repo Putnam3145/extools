@@ -43,13 +43,26 @@ using VelocityMatrix = Eigen::SparseMatrix<std::complex<float>>;
 
 using ProcessSpecifier = Eigen::Array<char,Eigen::Dynamic,Eigen::Dynamic>;
 
-const int ATMOS_WIDTH = 255;
+constexpr int ATMOS_GRANULARITY = 1;
+
+const float MAX_ATMOS_VELOCITY = std::pow(2.0,ATMOS_GRANULARITY+1)/std::pow(2.0,ATMOS_GRANULARITY);
 
 enum ProcessingLevel {
-	PROCESSING_LEVEL_NONE,
-	PROCESSING_LEVEL_SPACE,
-	PROCESSING_LEVEL_STATION,
-	PROCESSING_LEVEL_PLANET
+	TURF_PROCESSING_LEVEL_NONE = -1,
+	TURF_PROCESSING_LEVEL_SPACE = 0,
+	TURF_PROCESSING_LEVEL_STATION = 1,
+	TURF_PROCESSING_LEVEL_PLANET = 2
+};
+
+struct ZAtmos {
+	ProcessSpecifier processing_turfs;
+	std::unordered_map<int,GasMatrix> gasDensities;
+	Eigen::SparseMatrix<float> gasEnergy;
+	VelocityMatrix gasVelocity;
+	Eigen::SparseMatrix<float> energySources;
+	VelocityMatrix velocitySources;
+	std::unordered_map<int,GasMatrix> sources;
+	void resize(int y,int x);
 };
 
 class TurfGrid {
@@ -58,17 +71,16 @@ public:
 	Tile &get(int id);
 	GasMixture gas_from_turf(int x,int y, int z,bool cache=true);
 	GasMixture gas_from_turf(int id,bool cache=true);
+	std::complex<float> get_velocity(int id);
+	void update_turf(int id, bool can_pass);
+	void set_turf_proc_level(int id, int level);
+	void add_to_source(int id,GasMixture& gas,float force,float dir);
 	void refresh();
 	void process();
+	void consider_pressure_differences();
 
 private:
-	std::vector<ProcessSpecifier> processing_turfs;
-	std::unordered_map<int,std::vector<GasMatrix>> gasDensities;
-	std::vector<GasMatrix> gasEnergy;
-	std::vector<VelocityMatrix> gasVelocity;
-	std::vector<GasMatrix> energySources;
-	std::vector<VelocityMatrix> velocitySources;
-	std::unordered_map<int,std::vector<GasMatrix>> sources;
+	std::vector<ZAtmos> zLevels;
 	std::unordered_map<int,GasMixture> gasesByTurf;
 	short maxx = 0;
 	short maxy = 0;
