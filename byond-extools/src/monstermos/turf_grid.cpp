@@ -78,6 +78,12 @@ void Tile::process_cell(int fire_count) {
 	SetVariable(turf_ref.type, turf_ref.value, str_id_current_cycle, Value(float(fire_count)));
 
 	bool has_planetary_atmos = turf_ref.get_by_id(str_id_planetary_atmos).valuef;
+	if (has_planetary_atmos) {
+		update_planet_atmos();
+		air->copy_from_mutable(planet_atmos_info->last_mix);
+		SSair.invoke("remove_from_active", { turf_ref });
+		return;
+	}
 	int adjacent_turfs_length = 0;
 	atmos_cooldown++;
 	for (int i = 0; i < 6; i++) {
@@ -129,18 +135,6 @@ void Tile::process_cell(int fire_count) {
 			else {
 				enemy_tile.turf_ref.invoke_by_id(str_id_consider_pressure_difference, { turf_ref, -difference });
 			}
-			last_share_check();
-		}
-	}
-	if (has_planetary_atmos) {
-		update_planet_atmos();
-		if (air->compare(planet_atmos_info->last_mix)) {
-			if (!excited_group) {
-				std::shared_ptr<ExcitedGroup> eg = std::make_shared<ExcitedGroup>();
-				eg->initialize();
-				eg->add_turf(*this);
-			}
-			air->share(planet_atmos_info->last_mix, adjacent_turfs_length);
 			last_share_check();
 		}
 	}
