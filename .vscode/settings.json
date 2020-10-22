@@ -79,6 +79,7 @@
         "execution": "cpp",
         "future": "cpp",
         "queue": "cpp",
-        "set": "cpp"
+        "set": "cpp",
+        "variant": "cpp"
     }
 }

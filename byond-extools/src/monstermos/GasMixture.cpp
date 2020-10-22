@@ -16,6 +16,18 @@ std::vector<float> gas_specific_heat;
 
 extern int total_num_gases;
 
+void GasMixture::garbage_collect() {
+    int last_non_zero = 0;
+    for(int i=0;i<moles.size();i++)
+    {
+        if(moles[i] >= GAS_MIN_MOLES)
+        {
+            last_non_zero = i;
+        }
+    }
+    moles.resize(last_non_zero+1);
+}
+
 GasMixture::GasMixture(float v)
 {
     if(v < 0) v = 0;
@@ -25,6 +37,20 @@ GasMixture::GasMixture(float v)
 }
 
 GasMixture::GasMixture() {}
+
+float GasMixture::get_moles(int gas_type) const {
+    return moles.size() > gas_type ? moles[gas_type] : 0.0;
+}
+
+void GasMixture::set_moles(int gas_type, float new_moles) { 
+    if(!immutable) {
+        if(gas_type > moles.size())
+        {
+            moles.resize(gas_type+1);
+        }
+        moles[gas_type] = new_moles;
+    }
+}
 
 float GasMixture::total_moles() const {
     return std::reduce(std::execution::seq,moles.cbegin(),moles.cend());
@@ -83,6 +109,7 @@ void GasMixture::merge(const GasMixture &giver) {
 			temperature = (giver.temperature * giver_heat_capacity + temperature * self_heat_capacity) / combined_heat_capacity;
         }
     }
+    moles.resize(std::max(moles.size(),giver.moles.size()));
     std::transform(
         std::execution::seq,
         moles.begin(),moles.end(),
@@ -107,13 +134,9 @@ GasMixture GasMixture::remove_ratio(float ratio) {
         moles.begin(),moles.end(),
         removed.moles.begin(),
         [&ratio](auto& gas) {
-            if(gas < GAS_MIN_MOLES) {
-                return (float)(0.0);
-            } else {
-                return gas * ratio;
-            }
+            return gas * ratio;
     });
-    if(!immutable)
+    if(!immutable) [[likely]]
     {
         std::transform(std::execution::seq,
         moles.begin(),moles.end(),
@@ -123,6 +146,8 @@ GasMixture GasMixture::remove_ratio(float ratio) {
             return myGas-removedGas;
         });
     }
+    removed.garbage_collect();
+    garbage_collect();
     return removed;
 }
 
@@ -132,38 +157,44 @@ void GasMixture::copy_from_mutable(const GasMixture &sample) {
     temperature = sample.temperature;
 }
 
-float GasMixture::share(GasMixture &sharer, int atmos_adjacent_turfs) {
-    float temperature_delta = temperature_archived - sharer.temperature_archived;
-    float abs_temperature_delta = std::abs(temperature_delta);
-    float old_self_heat_capacity = 0;
-    float old_sharer_heat_capacity = 0;
-    if(abs_temperature_delta > MINIMUM_TEMPERATURE_DELTA_TO_CONSIDER) {
-        old_self_heat_capacity = heat_capacity();
-        old_sharer_heat_capacity = sharer.heat_capacity();
-    }
+float GasMixture::share(GasMixture &sharer, const int atmos_adjacent_turfs) {
+    const float temperature_delta = temperature_archived - sharer.temperature_archived;
+    const float abs_temperature_delta = std::abs(temperature_delta);
+    const float old_self_heat_capacity = heat_capacity();
+    const float old_sharer_heat_capacity = sharer.heat_capacity();
     float heat_capacity_self_to_sharer = 0;
     float heat_capacity_sharer_to_self = 0;
     float moved_moles = 0;
     float abs_moved_moles = 0;
     auto capacities = gas_specific_heat; // cache for sanic speed (yeah, seriously)
-    for(int i = 0; i < moles.size(); i++) {
-        float delta = (moles_archived[i] - sharer.moles_archived[i])/(atmos_adjacent_turfs+1);
-        if(std::abs(delta) >= GAS_MIN_MOLES) {
-            if((abs_temperature_delta > MINIMUM_TEMPERATURE_DELTA_TO_CONSIDER)) {
-                float gas_heat_capacity = delta * capacities[i];
-                if(delta > 0) {
-                    heat_capacity_self_to_sharer += gas_heat_capacity;
-                } else {
-                    heat_capacity_sharer_to_self -= gas_heat_capacity;
-                }
+    const int max_size = std::max(std::max(moles_archived.size(),sharer.moles_archived.size()),std::max(moles.size(),sharer.moles.size()));
+    moles.resize(max_size);
+    sharer.moles.resize(max_size);
+    moles_archived.resize(max_size);
+    sharer.moles_archived.resize(max_size);
+    auto moles_copy = moles;
+    auto sharer_copy = sharer.moles;
+    std::vector<float> heat_cap_deltas(max_size);
+    for(int i = 0; i < max_size; i++) {
+        const float delta = (moles_archived[i] - sharer.moles_archived[i])/(atmos_adjacent_turfs+1);
+        heat_cap_deltas[i] = delta * capacities[i];
+        moles_copy[i] -= delta;
+        sharer_copy[i] += delta;
+        moved_moles += delta;
+        abs_moved_moles += std::abs(delta);
+    }
+    if((abs_temperature_delta > MINIMUM_TEMPERATURE_DELTA_TO_CONSIDER)) {
+        for(int i=0;i<max_size;i++) {
+            const float gas_heat_capacity = heat_cap_deltas[i];
+            if(gas_heat_capacity > 0) {
+                heat_capacity_self_to_sharer += gas_heat_capacity;
+            } else {
+                heat_capacity_sharer_to_self -= gas_heat_capacity;
             }
-            if(!immutable) moles[i] -= delta;
-            if(!sharer.immutable) sharer.moles[i] += delta;
-            moved_moles += delta;
-            abs_moved_moles += std::abs(delta);
         }
     }
-
+    if(!immutable) moles = moles_copy;
+    if(!sharer.immutable) sharer.moles = sharer_copy;
 	last_share = abs_moved_moles;
 
     if(abs_temperature_delta > MINIMUM_TEMPERATURE_DELTA_TO_CONSIDER) {
@@ -186,6 +217,8 @@ float GasMixture::share(GasMixture &sharer, int atmos_adjacent_turfs) {
 			}
 		}
     }
+    garbage_collect();
+    sharer.garbage_collect();
     if(temperature_delta > MINIMUM_TEMPERATURE_TO_MOVE || std::abs(moved_moles) > MINIMUM_MOLES_DELTA_TO_MOVE) {
 		float our_moles = total_moles();
 		float their_moles = sharer.total_moles();
@@ -248,7 +281,8 @@ int GasMixture::compare(GasMixture &sample) const {
 
 void GasMixture::clear() {
 	if (immutable) return;
-	std::fill(moles.begin(),moles.end(),(float)0.0);
+	moles.clear();
+    moles_archived.clear();
 }
 
 void GasMixture::multiply(float multiplier) {

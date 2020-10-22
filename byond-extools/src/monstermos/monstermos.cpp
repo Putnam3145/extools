@@ -79,6 +79,7 @@ trvh gasmixture_unregister(unsigned int args_len, Value* args, Value src)
 	uint32_t v = src.get_by_id(str_id_extools_pointer).value;
 	if (v != 0) {
 		next_gas_ids.emplace_back(v);
+		gas_mixtures[v-1].clear();
 		SetVariable(src.type, src.value, str_id_extools_pointer, Value::Null());
 	}
 	return Value::Null();
@@ -222,6 +223,10 @@ trvh gasmixture_set_temperature(unsigned int args_len, Value* args, Value src)
 	float vf = args_len > 0 ? args[0].valuef : 0;
 	if (std::isnan(vf) || std::isinf(vf)) {
 		Runtime("Attempt to set temperature to NaN or Infinity");
+		get_gas_mixture(src).set_temperature(293.15);
+	} else if(vf < 0) {
+		Runtime("Attempt to set temperature to negative number");
+		get_gas_mixture(src).set_temperature(2.7);
 	} else {
 		get_gas_mixture(src).set_temperature(vf);
 	}
@@ -247,7 +252,16 @@ trvh gasmixture_set_moles(unsigned int args_len, Value* args, Value src)
 	if (args_len < 2 || args[0].type != DATUM_TYPEPATH)
 		return Value::Null();
 	int index = gas_ids[args[0].value];
-	get_gas_mixture(src).set_moles(index, args[1].valuef);
+	float vf = args[1].valuef;
+	if (std::isnan(vf) || std::isinf(vf)) {
+		Runtime("Attempt to set moles to NaN or Infinity");
+		get_gas_mixture(src).set_moles(index, 0);
+	} else if(vf < 0) {
+		Runtime("Attempt to set moles to negative number");
+		get_gas_mixture(src).set_moles(index, 0);
+	} else {
+		get_gas_mixture(src).set_moles(index, vf);
+	}
 	return Value::Null();
 }
 
@@ -654,12 +668,6 @@ trvh SSair_update_ssair(unsigned int args_len, Value* args, Value src) {
 	return Value::Null();
 }
 
-long long react_check_benchmark = 0;
-
-long long react_total_benchmark = 0;
-
-long reacts_done = 0;
-
 trvh gasmixture_react(unsigned int args_len, Value* args, Value src)
 {
 	GasMixture &src_gas = get_gas_mixture(src);
@@ -673,22 +681,13 @@ trvh gasmixture_react(unsigned int args_len, Value* args, Value src)
 	{
 		holder = args[0];
 	}
-	std::vector<bool> can_react(cached_reactions.size());
-	std::transform(std::execution::seq, //par introduces 2000 ns overhead, so, if this ever gets to be more than 2000 ns...
-		cached_reactions.begin(),cached_reactions.end(),
-		can_react.begin(),
-		[&src_gas](auto& reaction) {
-			return reaction.check_conditions(src_gas);
-		}
-	);
-	for(int i=0;i<cached_reactions.size();i++)
+	for(auto& reaction : cached_reactions)
 	{
-		if(can_react[i])
+		if(reaction.check_conditions(src_gas)) [[unlikely]]
 		{
-			auto &reaction = cached_reactions[i];
 			IncRefCount(src.type,src.value); // have to do this or the gas mixture will be GC'd at the end of the function
 			IncRefCount(holder.type,holder.value); // i'm assuming this would also end up GC'd--even worse
-			ret |= cached_reactions[i].react(src_gas,src,holder);
+			ret |= reaction.react(src_gas,src,holder);
 		}
 		if(ret & STOP_REACTIONS) return Value((float)ret);
 	}
