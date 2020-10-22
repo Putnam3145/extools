@@ -38,20 +38,19 @@ class GasMixture
 		int compare(GasMixture &sample) const;
 		void clear();
 		void multiply(float multiplier);
-        robin_hood::unordered_set<int> gases_in_mix() const;
+        float get_moles(int gas_type) const;
+        void set_moles(int gas_type, float new_moles);
 
         inline float get_temperature() const { return temperature; }
         inline void set_temperature(float new_temp) { if(!immutable) temperature = new_temp; }
-        inline float get_moles(int gas_type) const {return moles.contains(gas_type) ? moles.at(gas_type) : 0.0;}
-        inline void set_moles(int gas_type, float new_moles) { if(!immutable) moles[gas_type] = new_moles; }
 		inline float get_volume() const { return volume; }
 		inline void set_volume(float new_vol) { volume = new_vol; }
 		inline float get_last_share() const { return last_share; }
 
     private:
         GasMixture();
-        robin_hood::unordered_map<int,float> moles;
-        robin_hood::unordered_map<int,float> moles_archived;
+        std::vector<float> moles;
+        std::vector<float> moles_archived;
         float temperature = 0;
         float temperature_archived;
         float volume;
